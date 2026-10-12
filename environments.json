@@ -1,0 +1,28 @@
+[
+  {
+    "environment_id": "win11-autocad2026",
+    "os": "windows11",
+    "software": [{"name": "AutoCAD", "version": "2026"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "julyai/mywinarena:v1",
+    "base_storage": "/data/hdd/ProSoftAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_v1_autocad_30G.img",
+    "base_format": "raw",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-autocad2026-solidworks2025-ansys2024r1",
+    "os": "windows11",
+    "software": [
+      {"name": "AutoCAD", "version": "2026"},
+      {"name": "SolidWorks", "version": "2025"},
+      {"name": "ANSYS", "version": "2024 R1"}
+    ],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "julyai/mywinarena:v1",
+    "base_storage": "/data/hdd/ProSoftAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data.img",
+    "base_format": "raw",
+    "probe_path": "/probe"
+  }
+]
