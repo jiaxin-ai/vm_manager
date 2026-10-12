@@ -157,12 +157,8 @@ def main():
     vms.start_inspector()
     log.info("VM Manager listening on %s:%s (access_host=%s, data_root=%s)",
              settings["listen_host"], settings["listen_port"], settings["access_host"], data_root)
-    try:
-        uvicorn.run(create_app(vms, workspaces, recordings), host=settings["listen_host"],
-                    port=settings["listen_port"], workers=1, log_config=None)
-    finally:
-        vms.stop_inspector()
-        log.info("inspector stopped; virtual machines are left as they are")
+    app = create_app(vms, workspaces, recordings, on_shutdown=vms.stop_inspector)
+    uvicorn.run(app, host=settings["listen_host"], port=settings["listen_port"], workers=1, log_config=None)
 
 
 if __name__ == "__main__":

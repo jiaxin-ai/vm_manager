@@ -3,6 +3,7 @@
 路由只做参数校验和结果转换，业务逻辑交给各 manager。Docker SDK 是同步调用，路由用普通 def。
 """
 import logging
+from contextlib import asynccontextmanager
 from typing import Annotated, Generic, List, Literal, Optional, TypeVar
 
 from fastapi import FastAPI, Request
@@ -295,8 +296,14 @@ def _validation_error(fields):
 # ==================== 路由 ====================
 
 
-def create_app(vms, workspaces, recordings):
-    app = FastAPI(title="VM Manager", version="1")
+def create_app(vms, workspaces, recordings, on_shutdown=None):
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+        if on_shutdown is not None:
+            on_shutdown()  # uvicorn 收到 SIGTERM 时会在关闭后重新触发信号，必须在 lifespan 中收尾
+
+    app = FastAPI(title="VM Manager", version="1", lifespan=lifespan)
 
     @app.exception_handler(ApiError)
     def handle_api_error(request: Request, exc: ApiError):

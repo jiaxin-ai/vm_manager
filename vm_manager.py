@@ -488,6 +488,7 @@ class VmManager:
         if self._thread is not None:
             self._thread.join(timeout=30)
         self.executor.shutdown(wait=False)
+        log.info("inspector stopped; virtual machines are left as they are")
 
     def wake(self):
         self._wake.set()
