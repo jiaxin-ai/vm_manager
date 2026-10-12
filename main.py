@@ -64,9 +64,12 @@ def load_config(settings_path, environments_path):
 
 def check_chattr(data_root):
     """data_root 可写，且支持 chattr +i：加上 +i 后写入应当失败。"""
-    os.makedirs(data_root, exist_ok=True)
-    fd, path = tempfile.mkstemp(prefix=".chattr-check-", dir=data_root)
-    os.close(fd)
+    try:
+        os.makedirs(data_root, exist_ok=True)
+        fd, path = tempfile.mkstemp(prefix=".chattr-check-", dir=data_root)
+        os.close(fd)
+    except OSError as exc:
+        raise StartupError(f"data_root 不可写：{data_root}：{exc}")
     try:
         result = subprocess.run(["chattr", "+i", path], capture_output=True, text=True)
         if result.returncode != 0:

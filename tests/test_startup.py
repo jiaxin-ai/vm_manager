@@ -58,3 +58,16 @@ def test_load_config_resolves_relative_paths(tmp_path):
     assert settings["access_host"] != "REPLACE_WITH_HOST_LAN_IP"
     assert all(os.path.isabs(e["base_storage"]) for e in envs)
     assert os.path.isabs(settings["data_root"])
+
+
+def test_data_root_not_writable(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root 可以写任何目录")
+    readonly = tmp_path / "ro"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    try:
+        with pytest.raises(main.StartupError, match="不可写"):
+            main.check_chattr(str(readonly / "data"))
+    finally:
+        readonly.chmod(0o755)
