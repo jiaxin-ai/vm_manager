@@ -15,6 +15,12 @@ log = logging.getLogger(__name__)
 VM_STATUSES = ("queued", "creating", "starting", "running", "stopping", "stopped", "deleting", "failed")
 SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "start_windows.sh")
 RETRY_INTERVAL_SECONDS = 60
+# A running VM fails only after its agent service has been unreachable this long (settings health_failure_seconds):
+# Windows restarting inside the VM takes 1-3 minutes, during which the container keeps running.
+DEFAULT_HEALTH_FAILURE_SECONDS = 300
+# After an outage at least this long the recorder in the VM is assumed gone (Windows restarted): its recording is
+# ended and a new one started. Shorter outages leave the recording alone.
+RECORDING_RESUME_SECONDS = 30
 
 
 def _docker_unavailable():
@@ -43,6 +49,7 @@ class VmManager:
         self._thread = None
         self._recovery_pending = False
         self._docker_was_ok = True
+        self._unreachable_since = {}  # vm_id -> first failed check of the current outage of a running VM (in memory)
 
     # ==================== 资源（8.3） ====================
 
@@ -184,6 +191,8 @@ class VmManager:
             "stopped_at": vm["stopped_at"],
             "stop_reason": vm["stop_reason"],
             "error": {"code": vm["error_code"], "message": vm["error_message"]} if vm["error_code"] else None,
+            "unreachable_since": to_iso(self._unreachable_since[vm_id])
+            if vm["status"] == "running" and vm_id in self._unreachable_since else None,
         }
 
     # ==================== 创建（11.3） ====================
@@ -657,6 +666,7 @@ class VmManager:
         if not container_running:
             return self._fail(vm, "CONTAINER_EXITED", "容器已退出", container_running=False)
         if vm["status"] == "starting":
+            self._unreachable_since.pop(vm_id, None)
             if healthy:
                 if self.db.update_vm(vm_id, {"status": "running", "health_failures": 0}, statuses=["starting"]):
                     log.info("vm %s running", vm_id)
@@ -665,24 +675,47 @@ class VmManager:
                 return self._fail(vm, "STARTUP_TIMEOUT",
                                   f"开始创建后 {self.settings['boot_timeout_seconds']} 秒仍未就绪")
             return False
+        now = self.clock()
         if healthy:
+            since = self._unreachable_since.pop(vm_id, None)
             if vm["health_failures"]:
                 self.db.update_vm(vm_id, {"health_failures": 0}, statuses=["running"])
+            if since is not None:
+                outage = (now - since).total_seconds()
+                log.info("vm %s reachable again after %ds", vm_id, outage)
+                if outage >= RECORDING_RESUME_SECONDS and self.db.active_recording(vm_id) is not None:
+                    return self._handoff(vm_id, self._resume_recording)
             return False
-        failures = vm["health_failures"] + 1
+        since = self._unreachable_since.setdefault(vm_id, now)
+        failures, outage = vm["health_failures"] + 1, (now - since).total_seconds()
         self.db.update_vm(vm_id, {"health_failures": failures}, statuses=["running"])
-        log.warning("vm %s health check failed (%d in a row)", vm_id, failures)
-        if failures >= self.settings["health_failure_threshold"]:
-            return self._fail(vm, "HEALTH_CHECK_FAILED", f"运行中连续 {failures} 次检查失败")
+        if failures == 1 or failures % 15 == 0:
+            log.warning("vm %s health check failed (%d in a row, unreachable for %ds)", vm_id, failures, outage)
+        limit = self.settings.get("health_failure_seconds", DEFAULT_HEALTH_FAILURE_SECONDS)
+        if failures >= self.settings["health_failure_threshold"] and outage >= limit:
+            self._unreachable_since.pop(vm_id, None)
+            return self._fail(vm, "HEALTH_CHECK_FAILED", f"运行中连续 {int(outage)} 秒无响应（{failures} 次检查失败）")
         return False
 
     def _auto_start_recording(self, vm_id):
         self.recordings.start_locked(vm_id, None, manual=False)
 
+    def _resume_recording(self, vm_id):
+        """The VM answered again after a long outage (Windows restarted): the recorder that ran before is gone, so its
+        recording is ended (what it wrote is kept) and a new one started for the rest of this run."""
+        vm = self.db.get_vm(vm_id)
+        rec = self.db.active_recording(vm_id)
+        if vm is None or vm["status"] != "running" or rec is None:
+            return
+        log.info("vm %s: recording %s ended after the outage, starting a new one", vm_id, rec["recording_id"])
+        self.recordings.end_for_vm(vm)
+        self.recordings.start_locked(vm_id, rec["chat_id"], manual=False)
+
     def _fail(self, vm, code, message, container_running=True):
         """starting/running → failed。调用方持有实例锁。
         容器仍在运行时，交给后台先结束采集、再停止容器（不删除），返回 True。"""
         fields = {"status": "failed", "error_code": code, "error_message": message, "stop_reason": "failure"}
+        self._unreachable_since.pop(vm["vm_id"], None)
         if not container_running:
             fields.update(reserved=0, stopped_at=to_iso(self.clock()))
         if not self.db.update_vm(vm["vm_id"], fields, statuses=[vm["status"]]):

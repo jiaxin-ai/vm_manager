@@ -321,7 +321,8 @@ curl -X POST http://<ip>:<port>/v1/vms \
 查询虚拟机的配置、连接信息、状态与失败原因、时间、关联的任务空间与采集记录。提交创建或启动后，轮询此接口（建议每 5 秒一次）。
 
 - `status` 为 `running` 表示虚拟机可用：容器正在运行，探活地址返回成功，已开放的 VNC 和 RDP 可以连接。
-- 运行期间系统会持续检查，连续 3 次检查失败则变为 `failed`（HEALTH_CHECK_FAILED），并自动停止。
+- 运行期间系统会持续检查。虚拟机内的 Agent 服务持续 5 分钟无响应（且至少连续 3 次检查失败）才变为 `failed`（HEALTH_CHECK_FAILED），并自动停止；在虚拟机里重启 Windows 通常只需 1～3 分钟，不会被判为失败。无响应期间 `unreachable_since` 为开始无响应的时间。
+- 无响应超过 30 秒后恢复（例如 Windows 重启过）时，正在进行的采集记录会结束（已采集的内容保留），并自动开始一条新的采集记录。
 - 每次启动后，端口都可能变化，请以最新返回的端口为准。
 - 停止或失败后，仍会返回原来分配的地址供排查使用，但不保证这些地址仍可访问。
 
@@ -379,8 +380,9 @@ curl -X POST http://<ip>:<port>/v1/vms \
 | data.stopped_at | String | 停止时间；未停止，或重新启动后，为 null |
 | data.stop_reason | String | 停止原因：`manual` 手动停止、`cancelled` 排队中被取消、`expired` 到期自动停止、`failure` 失败后自动停止；未停止，或重新启动后，为 null |
 | data.error | Object | 失败信息；没有失败时为 null |
-| data.error.code | String | `QUEUE_TIMEOUT` 排队超时、`HOST_NOT_READY` 宿主机环境未就绪、`PROVISION_FAILED` 创建失败、`STARTUP_TIMEOUT` 启动超时、`CONTAINER_EXITED` 容器异常退出、`HEALTH_CHECK_FAILED` 运行中连续 3 次检查失败 |
+| data.error.code | String | `QUEUE_TIMEOUT` 排队超时、`HOST_NOT_READY` 宿主机环境未就绪、`PROVISION_FAILED` 创建失败、`STARTUP_TIMEOUT` 启动超时、`CONTAINER_EXITED` 容器异常退出、`HEALTH_CHECK_FAILED` 运行中持续 5 分钟无响应 |
 | data.error.message | String | 失败原因说明 |
+| data.unreachable_since | String | 运行中虚拟机内的 Agent 服务从何时起无响应（例如 Windows 正在重启）；正常时为 null |
 
 **调用示例**
 

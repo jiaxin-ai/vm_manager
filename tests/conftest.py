@@ -32,6 +32,7 @@ SETTINGS = {
     "poll_interval_seconds": 2,
     "probe_timeout_seconds": 3,
     "health_failure_threshold": 3,
+    "health_failure_seconds": 0,  # most tests fail a VM after 3 checks; test_reboot.py uses the 300 s default
     "stop_timeout_seconds": 120,
     "recorder_start_path": "/recording/start",
     "recorder_stop_path": "/recording/stop",

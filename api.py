@@ -223,6 +223,7 @@ class VmDetail(BaseModel):
     stopped_at: Optional[str]
     stop_reason: Optional[str]
     error: Optional[VmError]
+    unreachable_since: Optional[str] = None
 
 
 class VmStarted(BaseModel):
