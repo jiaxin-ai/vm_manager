@@ -21,6 +21,8 @@ log = logging.getLogger(__name__)
 
 PathId = Annotated[StrictStr, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
+MAX_TIMEOUT_MINUTES = 7 * 24 * 60
+TimeoutMinutes = Annotated[StrictInt, Field(gt=0, le=MAX_TIMEOUT_MINUTES)]
 
 
 class StrictModel(BaseModel):
@@ -38,7 +40,7 @@ class ExposeIn(StrictModel):
 
 
 class LifecycleIn(StrictModel):
-    timeout_minutes: Optional[PositiveInt] = None  # 不传时取 settings 中的默认值
+    timeout_minutes: Optional[TimeoutMinutes] = None  # 不传时取 settings 中的默认值
     queue_timeout_minutes: Optional[PositiveInt] = None
 
 
@@ -60,6 +62,14 @@ class CreateVmIn(StrictModel):
         if info.data.get("task_id") in value:
             raise ValueError("上游任务不能包含本任务")
         return value
+
+
+class StartLifecycleIn(StrictModel):
+    timeout_minutes: TimeoutMinutes
+
+
+class StartVmIn(StrictModel):
+    lifecycle: Optional[StartLifecycleIn] = None
 
 
 class TaskRefIn(StrictModel):
@@ -349,8 +359,9 @@ def create_app(vms, workspaces, recordings, on_shutdown=None):
         return {"data": vms.detail(vm_id)}
 
     @app.post("/v1/vms/{vm_id}/start", response_model=Data[VmStarted])
-    def start_vm(vm_id: str):
-        return {"data": vms.start(vm_id)}
+    def start_vm(vm_id: str, body: Optional[StartVmIn] = None):
+        timeout = body.lifecycle.timeout_minutes if body and body.lifecycle else None
+        return {"data": vms.start(vm_id, timeout)}
 
     @app.post("/v1/vms/{vm_id}/stop", response_model=Data[VmStopped])
     def stop_vm(vm_id: str):

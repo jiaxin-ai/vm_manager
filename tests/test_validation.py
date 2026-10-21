@@ -183,12 +183,37 @@ def test_delete_missing_vm_is_success(h):
 
 # ---------- 409 / 500 ----------
 
-def test_vm_failed_on_start(h):
-    vm_id = h.create_ok(lifecycle={"queue_timeout_minutes": 1})
-    h.vms.db.update_vm(vm_id, {"status": "failed", "error_code": "QUEUE_TIMEOUT"})
+def test_vm_failed_on_start_without_its_container(h):
+    vm_id = h.create_ok()
+    h.rounds(2)
+    h.backend.exit_container(vm_id)
+    h.rounds(1)
+    assert h.status(vm_id) == "failed"
+    h.backend.containers.clear()
     resp = h.client.post(f"/v1/vms/{vm_id}/start")
     assert resp.status_code == 409 and error_code(resp) == "VM_FAILED"
     assert resp.json()["error"]["details"] == {"vm_id": vm_id}
+
+
+@pytest.mark.parametrize("body", [
+    {"lifecycle": {"timeout_minutes": 0}},
+    {"lifecycle": {"timeout_minutes": 10081}},
+    {"lifecycle": {"timeout_minutes": "60"}},
+    {"lifecycle": {"timeout_minutes": 1.5}},
+    {"lifecycle": {}},
+    {"lifecycle": {"queue_timeout_minutes": 5}},
+    {"timeout_minutes": 60},
+])
+def test_start_body_is_validated(h, body):
+    vm_id = h.create_ok()
+    resp = h.client.post(f"/v1/vms/{vm_id}/start", json=body)
+    assert resp.status_code == 422 and error_code(resp) == "VALIDATION_ERROR", resp.text
+
+
+def test_create_rejects_a_run_limit_over_seven_days(h):
+    resp = h.create(lifecycle={"timeout_minutes": 7 * 24 * 60 + 1})
+    assert resp.status_code == 422 and error_code(resp) == "VALIDATION_ERROR"
+    assert h.create(lifecycle={"timeout_minutes": 7 * 24 * 60}).status_code == 200
 
 
 def test_vm_busy_details_contain_status(h):

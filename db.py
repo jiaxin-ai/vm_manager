@@ -202,13 +202,13 @@ class Database:
             self._insert(conn, "vms", row)
             return self._queue_position(conn, row["vm_id"])
 
-    def requeue_vm(self, vm_id, fields):
-        """stopped → queued，排到队尾。返回排队序号；状态已变化时返回 None。"""
+    def requeue_vm(self, vm_id, fields, status="stopped"):
+        """stopped / failed → queued，排到队尾。返回排队序号；状态已变化时返回 None。"""
         with self.transaction() as conn:
             fields = dict(fields, status="queued", queue_order=self._next_queue_order(conn))
             sets = ", ".join(f"{k}=?" for k in fields)
             cursor = conn.execute(
-                f"UPDATE vms SET {sets} WHERE vm_id=? AND status='stopped'", (*fields.values(), vm_id)
+                f"UPDATE vms SET {sets} WHERE vm_id=? AND status=?", (*fields.values(), vm_id, status)
             )
             if cursor.rowcount != 1:
                 return None

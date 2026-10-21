@@ -1,8 +1,10 @@
 """状态与时间：各状态下启动/停止/删除（11.3）、排队超时、启动超时、到期、健康检查、容器参数、创建失败。"""
 import os
+from datetime import timedelta
 
 import pytest
 
+from common import from_iso
 from conftest import GIB, error_code
 
 
@@ -69,6 +71,97 @@ def test_start_stopped_lock_busy(h):
     resp = h.client.post(f"/v1/vms/{vm_id}/start")
     assert resp.status_code == 409 and error_code(resp) == "VM_BUSY"
     lk.release()
+
+
+def fail_by_health_check(h, vm_id):
+    h.backend.unhealthy.add(vm_id)
+    h.rounds(h.settings["health_failure_threshold"])
+    h.backend.unhealthy.discard(vm_id)
+    vm = h.vm(vm_id)
+    assert vm["status"] == "failed" and vm["error_code"] == "HEALTH_CHECK_FAILED" and vm["reserved"] == 0
+    return vm
+
+
+def test_start_failed_vm_reuses_its_container(h):
+    vm_id = h.run_vm()
+    before = fail_by_health_check(h, vm_id)
+    h.clock.advance(30)
+    data = h.client.post(f"/v1/vms/{vm_id}/start").json()["data"]
+    assert data == {"vm_id": vm_id, "status": "queued", "queue_position": 1}
+    vm = h.vm(vm_id)
+    assert vm["error_code"] is None and vm["error_message"] is None and vm["stop_reason"] is None
+    assert vm["started_at"] is None and vm["stopped_at"] is None and vm["health_failures"] == 0
+    h.rounds(2)
+    vm = h.vm(vm_id)
+    assert vm["status"] == "running" and vm["container_id"] == before["container_id"]
+    assert len(h.backend.containers) == 1  # 原来的容器，C 盘还在
+    assert h.detail(vm_id)["error"] is None
+
+
+def test_start_failed_vm_that_never_ran_creates_its_container(h):
+    vm_id = h.create_ok(lifecycle={"queue_timeout_minutes": 1})
+    h.db.update_vm(vm_id, {"status": "failed", "error_code": "QUEUE_TIMEOUT"})
+    data = h.client.post(f"/v1/vms/{vm_id}/start").json()["data"]
+    assert data["status"] == "queued"
+    h.rounds(2)
+    assert h.status(vm_id) == "running" and len(h.backend.containers) == 1
+
+
+def test_start_failed_vm_whose_container_is_gone(h):
+    vm_id = h.run_vm()
+    fail_by_health_check(h, vm_id)
+    h.backend.containers.clear()
+    resp = h.client.post(f"/v1/vms/{vm_id}/start")
+    assert resp.status_code == 409 and error_code(resp) == "VM_FAILED"
+    assert resp.json()["error"]["details"] == {"vm_id": vm_id}
+    assert h.status(vm_id) == "failed" and h.vm(vm_id)["error_code"] == "HEALTH_CHECK_FAILED"
+
+
+def test_start_failed_vm_still_stopping_is_busy(h):
+    vm_id = h.run_vm()
+    h.db.update_vm(vm_id, {"status": "failed", "error_code": "HEALTH_CHECK_FAILED"})  # reserved 仍为 1
+    resp = h.client.post(f"/v1/vms/{vm_id}/start")
+    assert resp.status_code == 409 and error_code(resp) == "VM_BUSY"
+    assert resp.json()["error"]["details"] == {"status": "failed"}
+
+
+def test_start_sets_the_run_limit_for_this_and_later_runs(h):
+    vm_id = h.run_vm()
+    h.client.post(f"/v1/vms/{vm_id}/stop")
+    resp = h.client.post(f"/v1/vms/{vm_id}/start", json={"lifecycle": {"timeout_minutes": 240}})
+    assert resp.status_code == 200 and resp.json()["data"]["status"] == "queued"
+    h.rounds(2)
+    vm = h.vm(vm_id)
+    assert vm["timeout_minutes"] == 240
+    assert from_iso(vm["expires_at"]) - from_iso(vm["started_at"]) == timedelta(minutes=240)
+    assert h.detail(vm_id)["lifecycle"]["timeout_minutes"] == 240
+    h.client.post(f"/v1/vms/{vm_id}/stop")
+    h.client.post(f"/v1/vms/{vm_id}/start")
+    h.rounds(2)
+    assert h.vm(vm_id)["timeout_minutes"] == 240
+
+
+def test_start_with_a_run_limit_on_a_running_vm_moves_its_expiry(h):
+    vm_id = h.run_vm()
+    started = from_iso(h.vm(vm_id)["started_at"])
+    data = h.client.post(f"/v1/vms/{vm_id}/start", json={"lifecycle": {"timeout_minutes": 300}}).json()["data"]
+    assert data == {"vm_id": vm_id, "status": "running", "queue_position": None}
+    assert from_iso(h.vm(vm_id)["expires_at"]) == started + timedelta(minutes=300)
+    h.clock.advance(10 * 60)
+    resp = h.client.post(f"/v1/vms/{vm_id}/start", json={"lifecycle": {"timeout_minutes": 5}})
+    assert resp.status_code == 422 and error_code(resp) == "TIMEOUT_TOO_SHORT"
+    assert h.vm(vm_id)["timeout_minutes"] == 300
+    h.clock.advance(300 * 60)
+    h.rounds(1)
+    assert h.status(vm_id) == "stopped" and h.vm(vm_id)["stop_reason"] == "expired"
+
+
+def test_start_with_a_run_limit_on_a_queued_vm(h):
+    vm_id = h.create_ok()
+    h.client.post(f"/v1/vms/{vm_id}/start", json={"lifecycle": {"timeout_minutes": 30}})
+    h.rounds(2)
+    vm = h.vm(vm_id)
+    assert from_iso(vm["expires_at"]) - from_iso(vm["started_at"]) == timedelta(minutes=30)
 
 
 # ---------- 停止 ----------

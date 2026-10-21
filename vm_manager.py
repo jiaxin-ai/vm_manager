@@ -255,14 +255,46 @@ class VmManager:
         if vm["status"] in ("queued", "creating", "starting", "running"):
             position = self.db.queue_position(vm["vm_id"]) if vm["status"] == "queued" else None
             return {"vm_id": vm["vm_id"], "status": vm["status"], "queue_position": position}
-        if vm["status"] in ("stopping", "deleting"):
-            raise _vm_busy(vm["status"])
-        if vm["status"] == "failed":
-            raise ApiError(409, "VM_FAILED", "虚拟机处于失败状态，不能启动，请删除后重新创建", {"vm_id": vm["vm_id"]})
-        return None  # stopped：需要启动
+        if vm["status"] in ("stopping", "deleting") or (vm["status"] == "failed" and vm["reserved"]):
+            raise _vm_busy(vm["status"])  # failed 且 reserved=1：失败后还在停止容器
+        return None  # stopped / failed：需要启动
 
-    def start(self, vm_id):
+    def _change_timeout(self, vm_id, minutes):
+        """排队或运行中：只修改运行时长上限。已开始的按 started_at 重新计算 expires_at。"""
+        for _ in range(3):  # 状态在读和写之间变化时重读
+            vm = self._get(vm_id)
+            if vm["status"] not in ("queued", "creating", "starting", "running"):
+                return
+            fields = {"timeout_minutes": minutes}
+            if vm["started_at"]:
+                expires = from_iso(vm["started_at"]) + timedelta(minutes=minutes)
+                if expires <= self.clock():
+                    raise ApiError(422, "TIMEOUT_TOO_SHORT", "运行时长上限短于本次已经运行的时间",
+                                   {"started_at": vm["started_at"], "timeout_minutes": minutes})
+                fields["expires_at"] = to_iso(expires)
+            if self.db.update_vm(vm_id, fields, statuses=[vm["status"]]):
+                log.info("vm %s timeout set to %d minutes (expires_at=%s)", vm_id, minutes, fields.get("expires_at"))
+                return
+
+    def _check_disk_kept(self, vm):
+        """failed → 重新启动：运行过的虚拟机，C 盘在原来的容器里；容器不在时不启动，免得换成一块新的 C 盘。"""
+        if not vm["ever_started"]:
+            return  # 从未开机：没有 C 盘可丢，按首次创建处理
+        try:
+            found = self.backend.find_container(vm["vm_id"]) if vm["container_id"] else None
+        except DockerUnavailable:
+            raise _docker_unavailable()
+        if found is None:
+            raise ApiError(409, "VM_FAILED", "虚拟机失败后容器已不存在，C 盘无法恢复，请删除后重新创建",
+                           {"vm_id": vm["vm_id"]})
+
+    def start(self, vm_id, timeout_minutes=None):
+        """stopped / failed → queued，沿用原来的容器和 C 盘。timeout_minutes 修改运行时长上限，本次和以后的运行都按它；
+        已在排队或运行中时只修改上限。"""
         vm = self._get(vm_id)
+        if timeout_minutes is not None and vm["status"] in ("queued", "creating", "starting", "running"):
+            self._change_timeout(vm_id, timeout_minutes)
+            vm = self._get(vm_id)
         result = self._start_result(vm)
         if result is not None:
             return result
@@ -275,19 +307,27 @@ class VmManager:
             if result is not None:
                 return result
             self._check_host_ready(json.loads(vm["environment_json"]))
+            if vm["status"] == "failed":
+                self._check_disk_kept(vm)
             now = self.clock()
-            position = self.db.requeue_vm(vm_id, {
+            fields = {
                 "started_at": None,
                 "expires_at": None,
                 "stopped_at": None,
                 "stop_reason": None,
+                "error_code": None,
+                "error_message": None,
                 "health_failures": 0,
                 "queue_reason": None,
                 "queue_deadline": to_iso(now + timedelta(minutes=vm["queue_timeout_minutes"])),
-            })
+            }
+            if timeout_minutes is not None:
+                fields["timeout_minutes"] = timeout_minutes
+            position = self.db.requeue_vm(vm_id, fields, vm["status"])
             if position is None:
                 return self._start_result(self._get(vm_id))
-            log.info("vm %s re-queued (position=%d)", vm_id, position)
+            log.info("vm %s re-queued (position=%d%s)", vm_id, position,
+                     f", was failed: {vm['error_code']}" if vm["status"] == "failed" else "")
         finally:
             lock.release()
         self.wake()

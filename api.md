@@ -26,7 +26,7 @@ V1 共 18 个基础接口，分为 4 组。
 | 1 | 查询虚拟机列表 | GET | `/v1/vms` | 查询虚拟机列表，支持按项目 id、任务 id、状态筛选 |
 | 2 | 创建虚拟机 | POST | `/v1/vms` | 按选定的软件环境、资源规格和任务创建并自动启动虚拟机，自动挂载该任务的任务空间 |
 | 3 | 查询虚拟机详情 | GET | `/v1/vms/{vm_id}` | 查询虚拟机的配置、连接信息、状态与失败原因、时间、关联的任务空间与采集记录 |
-| 4 | 启动虚拟机 | POST | `/v1/vms/{vm_id}/start` | 重新启动已停止的虚拟机，不创建新实例 |
+| 4 | 启动虚拟机 | POST | `/v1/vms/{vm_id}/start` | 重新启动已停止或失败的虚拟机，不创建新实例；可同时修改运行时长上限 |
 | 5 | 停止虚拟机 | POST | `/v1/vms/{vm_id}/stop` | 停止虚拟机，释放 CPU 与内存，保留系统盘和任务空间关联 |
 | 6 | 删除虚拟机 | DELETE | `/v1/vms/{vm_id}` | 删除虚拟机，任务空间和采集记录保留 |
 
@@ -282,7 +282,7 @@ curl "http://<ip>:<port>/v1/vms?task_id=task_B&status=running,starting"
 | upstream_task_ids | Body | Array of String | 否 | 需要只读读取的上游任务 ID 列表，这些任务的任务空间必须已冻结；默认为空 | ["task_A"] |
 | expose.vnc | Body | Boolean | 否 | 是否开放 VNC 网页，默认 `true` | true |
 | expose.rdp | Body | Boolean | 否 | 是否开放 RDP，默认 `true` | true |
-| lifecycle.timeout_minutes | Body | Integer | 否 | 每次运行的最长时长（分钟），从开始创建或启动时算起，到期自动停止，默认 120 | 120 |
+| lifecycle.timeout_minutes | Body | Integer | 否 | 每次运行的最长时长（分钟），从开始创建或启动时算起，到期自动停止，默认 120，取值 1～10080（7 天）。之后可以在「启动虚拟机」时修改 | 120 |
 | lifecycle.queue_timeout_minutes | Body | Integer | 否 | 每次排队的最长时长（分钟），到期仍未开始创建则失败，默认 30 | 30 |
 
 不接受表中以外的字段。Agent 接口端口始终开放，不受 `expose` 控制。
@@ -454,18 +454,20 @@ curl http://<ip>:<port>/v1/vms/vm_a1b2c3d4
 
 **接口说明**
 
-重新启动已停止的虚拟机，不创建新实例。本接口为异步接口，调用后虚拟机重新进入排队，提交后轮询「查询虚拟机详情」。
+重新启动已停止或失败的虚拟机，不创建新实例。本接口为异步接口，调用后虚拟机重新进入排队，提交后轮询「查询虚拟机详情」。
 
 - 排队、排队超时、启动超时、运行到期的规则，与创建时相同；`started_at` 和 `expires_at` 按本次启动重新计算。
-- C 盘保留上次停止时的内容；D、E、F、G 盘的挂载与创建时相同。
+- C 盘保留上次停止（或失败后停止）时的内容；D、E、F、G 盘的挂载与创建时相同。内存中的内容（未保存的文件、打开的程序）不保留。
+- 失败的虚拟机重新启动时，`error`、`stop_reason` 清空。
+- 可选传入 `lifecycle.timeout_minutes`，修改运行时长上限，本次和以后的运行都按新的值。虚拟机已在排队或运行中时，只修改上限：运行中的按 `started_at` 重新计算 `expires_at`，新的到期时间早于当前时间时返回 422 TIMEOUT_TOO_SHORT。
 - **启动后端口可能变化，请以最新返回的端口为准。**
 
 | 当前状态 | 结果 |
 | --- | --- |
 | stopped | 重新进入排队，`status` 变为 `queued` |
-| queued / creating / starting / running | 已在启动或运行中，直接返回当前状态 |
+| failed | 重新进入排队，沿用原来的容器和 C 盘。失败后容器还在停止中时，返回 409 VM_BUSY，请稍后重试；运行过的虚拟机容器已不存在时（C 盘无法恢复），返回 409 VM_FAILED，请删除后重新创建；从未开机过的（如排队超时）按首次创建处理 |
+| queued / creating / starting / running | 已在启动或运行中，直接返回当前状态；传了 `lifecycle.timeout_minutes` 时修改运行时长上限 |
 | stopping / deleting | 返回 409 VM_BUSY，请稍后重试 |
-| failed | 返回 409 VM_FAILED。失败的虚拟机不能启动，请删除后重新创建 |
 
 **请求地址**
 
@@ -476,6 +478,7 @@ curl http://<ip>:<port>/v1/vms/vm_a1b2c3d4
 | 参数名称 | 位置 | 类型 | 必填 | 描述 | 示例值 |
 | --- | --- | --- | --- | --- | --- |
 | vm_id | Path | String | 是 | 虚拟机 ID | vm_a1b2c3d4 |
+| lifecycle.timeout_minutes | Body | Integer | 否 | 新的运行时长上限（分钟），取值 1～10080（7 天）。不传请求体，或不传 `lifecycle` 时不修改 | 240 |
 
 **响应参数**
 
@@ -491,6 +494,9 @@ curl http://<ip>:<port>/v1/vms/vm_a1b2c3d4
 
 ```bash
 curl -X POST http://<ip>:<port>/v1/vms/vm_a1b2c3d4/start
+# 同时把运行时长上限改为 4 小时
+curl -X POST http://<ip>:<port>/v1/vms/vm_a1b2c3d4/start \
+  -H "Content-Type: application/json" -d '{"lifecycle": {"timeout_minutes": 240}}'
 ```
 
 成功响应示例：
@@ -1246,7 +1252,7 @@ curl -X POST http://<ip>:<port>/v1/recordings/rec_9c0d1e2f/stop
 | 404 | WORKSPACE_NOT_FOUND | 任务空间不存在 | `workspace_id` |
 | 404 | RECORDING_NOT_FOUND | 采集记录不存在 | `recording_id` |
 | 409 | VM_BUSY | 虚拟机正在创建、停止或删除中，请稍后重试 | `status`：当前状态 |
-| 409 | VM_FAILED | 虚拟机处于失败状态，不能启动，请删除后重新创建 | `vm_id` |
+| 409 | VM_FAILED | 虚拟机失败后容器已不存在，C 盘无法恢复，不能启动，请删除后重新创建 | `vm_id` |
 | 409 | VM_NOT_RUNNING | 虚拟机不在 `running` 状态 | `status`：当前状态 |
 | 409 | UPSTREAM_NOT_FROZEN | 上游任务的任务空间尚未冻结 | `task_ids`：尚未冻结的上游任务 |
 | 409 | WORKSPACE_EXISTS | 该任务已有任务空间 | `task_id`；`workspace_id`：已有的任务空间 ID |
@@ -1256,6 +1262,7 @@ curl -X POST http://<ip>:<port>/v1/recordings/rec_9c0d1e2f/stop
 | 422 | BELOW_ENVIRONMENT_MINIMUM | 资源规格低于环境最低配置 | `requested`：请求的规格；`minimum`：最低配置 |
 | 422 | REQUEST_EXCEEDS_CAPACITY | 资源规格超出宿主机总容量，即使宿主机空闲也无法创建 | `requested`：请求的规格；`required`：含开销的实际占用；`capacity`：宿主机可分配总量 |
 | 422 | UPSTREAM_NOT_FOUND | 上游任务没有任务空间 | `task_ids`：没有任务空间的上游任务 |
+| 422 | TIMEOUT_TOO_SHORT | 运行时长上限短于本次已经运行的时间 | `started_at`；`timeout_minutes`：请求的上限 |
 | 500 | STOP_FAILED | 停止虚拟机未完成，可再次调用重试 | `vm_id` |
 | 500 | DELETE_FAILED | 删除虚拟机未完成，记录仍保留，可再次调用重试 | `vm_id` |
 | 500 | RECORDING_START_FAILED | 虚拟机内的采集程序启动失败 | `vm_id` |

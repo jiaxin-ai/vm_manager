@@ -126,7 +126,7 @@ sudo kill -TERM <pid>
 - **创建后一直是 queued**：查看详情中的 `queue.reason`。`waiting_turn` 表示前面还有请求（严格 FIFO）；`insufficient_resources` 表示 CPU/内存不足，或者 data_root、Docker 数据目录所在磁盘的剩余空间少于 `min_free_disk_gb`；`docker_unavailable` 表示 Docker 暂时无法连接。超过 `queue_timeout_minutes` 后变为 `failed/QUEUE_TIMEOUT`。
 - **REQUEST_EXCEEDS_CAPACITY**：单台虚拟机的占用（CPU = `cpu_cores`，内存 = `ram_gb + vm_overhead_ram_gb`）超过了宿主机预算（逻辑 CPU 数 − `host_reserved_cpu`，物理内存 − `host_reserved_ram_gb`），宿主机空闲时也无法创建。
 - **STARTUP_TIMEOUT**：从开始创建算起，`boot_timeout_seconds` 内健康检查都没有通过。容器会被停止但保留，可以用 `docker logs vm-<vm_id>` 排查，然后删除虚拟机后重新创建。实测首次开机约 6～8.5 分钟，重新开机约 1.5～2 分钟。
-- **HEALTH_CHECK_FAILED / CONTAINER_EXITED**：运行中连续检查失败达到阈值，或者容器自行退出。失败的虚拟机不能 `start`（返回 409 VM_FAILED），只能删除后重新创建。
+- **HEALTH_CHECK_FAILED / CONTAINER_EXITED**：运行中连续检查失败达到阈值，或者容器自行退出。容器停止后保留（含 C 盘），可以再次 `start`，沿用原来的容器；容器已被删除时返回 409 VM_FAILED，只能删除后重新创建。
 - **STOP_FAILED / DELETE_FAILED**：可以再次调用重试；巡检线程也会每 60 秒自动补做一次。
 - **采集记录一直是 failed，error 为“开始采集失败 3 次”**：虚拟机内的 Agent 还没有提供采集接口（或者接口返回非 200）。虚拟机本身不受影响，保持 running。
 - **disk_gb.used 比 df 显示的大**：按规范，`used = total − free`，其中包含文件系统的保留块。
