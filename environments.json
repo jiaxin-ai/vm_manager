@@ -4,9 +4,9 @@
     "os": "windows11",
     "software": [{"name": "AutoCAD", "version": "2026"}],
     "min_spec": {"cpu_cores": 4, "ram_gb": 8},
-    "docker_image": "julyai/mywinarena:v1",
+    "docker_image": "vmanager:1.0",
     "base_storage": "/data/hdd/ProSoftAgentArena/src/win-arena-container/vm/storage",
-    "base_img": "data_v1_autocad_30G.img",
+    "base_img": "data_v3_autocad.img",
     "base_format": "raw",
     "probe_path": "/probe"
   },
@@ -18,10 +18,10 @@
       {"name": "SolidWorks", "version": "2025"},
       {"name": "ANSYS", "version": "2024 R1"}
     ],
-    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
-    "docker_image": "julyai/mywinarena:v1",
+    "min_spec": {"cpu_cores": 8, "ram_gb": 16},
+    "docker_image": "vmanager:1.0",
     "base_storage": "/data/hdd/ProSoftAgentArena/src/win-arena-container/vm/storage",
-    "base_img": "data.img",
+    "base_img": "data_v2_autocad_sw_ansys.img",
     "base_format": "raw",
     "probe_path": "/probe"
   }

@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import socket
+import time
 
 import docker
 import requests
@@ -182,20 +183,27 @@ class Backend:
 
     def probe(self, agent_port, probe_path, vnc_port, rdp_port, timeout):
         """健康检查（12.2）。全部通过返回 True；第一项失败即返回 False。"""
+        stage, port, started = "agent", agent_port, time.monotonic()
         try:
             resp = self.http.get(f"http://127.0.0.1:{agent_port}{probe_path}", timeout=timeout)
-            if resp.status_code != 200 or resp.json().get("status") != "Probe successful":
-                return False
+            if resp.status_code != 200:
+                raise ValueError(f"HTTP {resp.status_code}")
+            body = resp.json()
+            if not isinstance(body, dict) or body.get("status") != "Probe successful":
+                raise ValueError("unexpected probe response")
             if vnc_port is not None:
+                stage, port, started = "vnc", vnc_port, time.monotonic()
                 resp = self.http.get(f"http://127.0.0.1:{vnc_port}/", timeout=timeout, allow_redirects=False)
                 if not 200 <= resp.status_code < 400:
-                    return False
+                    raise ValueError(f"HTTP {resp.status_code}")
             if rdp_port is not None:
+                stage, port, started = "rdp", rdp_port, time.monotonic()
                 with socket.create_connection(("127.0.0.1", rdp_port), timeout=timeout):
                     pass
             return True
         except Exception as exc:  # 超时、连接失败、内容不是 JSON 等
-            log.debug("probe failed on agent port %s: %s", agent_port, exc)
+            log.warning("probe failed stage=%s port=%s elapsed=%.3fs exception=%s: %s",
+                        stage, port, time.monotonic() - started, type(exc).__name__, exc)
             return False
 
     def agent_post(self, agent_port, path, body, timeout):
