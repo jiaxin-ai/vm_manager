@@ -26,7 +26,7 @@ HarnessStudio 的「专业软件虚拟化子系统」：一个独立的 REST 服
 
 ### 依赖
 
-- Linux，Python 3.10+，Docker（能访问 `/var/run/docker.sock`），`/dev/kvm`，`chattr`/`lsattr`（e2fsprogs），可选 `qemu-img`
+- Linux，Python 3.10+，Docker（能访问 `/var/run/docker.sock`），`/dev/kvm`，`chattr`/`lsattr`（e2fsprogs），`qemu-img`（配置了差分盘环境时必需，否则可选）
 - `data_root` 必须位于支持 `chattr +i` 的文件系统上（如 ext4、xfs）
 - 镜像必须**事先**存在于本地；服务运行期间不拉取镜像
 
@@ -38,7 +38,20 @@ python3 -m venv .venv
 ### 配置
 
 - `settings.json`：`access_host` 必须改成调用方能访问到的宿主机 IP 或域名（不能保留占位值 `REPLACE_WITH_HOST_LAN_IP`）。`vm_overhead_ram_gb`、`default_timeout_minutes`、`default_queue_timeout_minutes`、`boot_timeout_seconds`、`health_failure_threshold`、`health_failure_seconds`（可选，默认 300）在正式部署时必须与 api.md 一致。
-- `environments.json`：每个软件环境一项。`base_img` 只能是文件名。**基础磁盘文件不得修改或替换**：要更新软件，就新建磁盘文件并新增一个环境条目。
+- `environments.json`：每个软件环境一项，有两种磁盘形式：
+  - **单个基础盘**（vmanager:1.0 的 AutoCAD、AutoCAD+SolidWorks+ANSYS）：`base_storage` 目录下的 `base_img`（只能是文件名），格式为 `base_format`。
+  - **基础盘 + 差分盘**（vmanager:1.1 的 KiCad、LTspice、Blender、ParaView、OpenModelica）：多出一个 `diff_img`，写成 `<子目录>/<文件名>`（相对 `base_storage`）。差分盘必须是 qcow2，它记录的后备盘必须正好是 `/base_storage/<base_img>`，后备格式等于 `base_format`。差分盘所在子目录里的 `windows*` 启动文件（TPM 状态等）用来替换 `base_storage` 下的同名文件，所以这些文件名在 `base_storage` 下也必须存在。目录结构：
+
+    ```
+    <base_storage>/                    /data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage
+    ├── data_base.img                  base_img：公共基础盘（raw）
+    ├── windows*                       公共启动文件
+    └── kicad-10.0.7/
+        ├── data.qcow2                 diff_img：差分盘，后备盘 /base_storage/data_base.img
+        └── windows*                   这个软件自己的启动文件
+    ```
+
+  **基础盘和差分盘都不得修改或替换**：差分盘建立在基础盘上，基础盘一变，所有差分盘都会损坏；虚拟机的 C 盘又建立在差分盘上。不要再把软件子目录当作虚拟机的 `/storage` 开机（例如 WindowsAgentArena 的 `myscripts/start_vms.sh`），那样会直接写差分盘。要更新软件，就复制出新的磁盘文件或子目录，再新增一个环境条目。
 - 配置在启动时读取，修改后需要重启服务。每台虚拟机创建时会保存一份环境配置副本，之后修改配置不影响已有的虚拟机。
 
 ### 启动与停止
@@ -64,7 +77,7 @@ sudo kill -TERM <pid>
 
 服务退出时只停止巡检线程，**不会停止任何虚拟机**；重新启动后会按 task.md 第 13 节恢复状态（同一台虚拟机不会被重复创建，也不会重复开始采集）。
 
-启动前检查任一项不满足，服务都会以退出码 1 结束，并在日志中给出原因：环境 ID 重复、`base_img` 不是文件名、`access_host` 是占位值、`/dev/kvm` 不存在、Docker 无法连接、镜像不在本地、基础磁盘不存在、`data_root` 不可写或不支持 `chattr +i`、基础磁盘的实际格式与 `base_format` 不一致。
+启动前检查任一项不满足，服务都会以退出码 1 结束，并在日志中给出原因：环境 ID 重复、`base_img` 不是文件名、`diff_img` 不是「子目录/文件名」、`access_host` 是占位值、`/dev/kvm` 不存在、Docker 无法连接、镜像不在本地、基础磁盘或差分盘不存在、差分盘目录里的 `windows*` 文件在 `base_storage` 下没有同名文件、`data_root` 不可写或不支持 `chattr +i`、基础磁盘的实际格式与 `base_format` 不一致；有差分盘环境时还有：宿主机没有 `qemu-img`、差分盘不是 qcow2 或带有损坏标记、差分盘记录的后备盘不是 `/base_storage/<base_img>` 或后备格式与 `base_format` 不一致。
 
 ### 测试
 
@@ -94,9 +107,9 @@ sudo kill -TERM <pid>
 
 | 组件 | 约定 |
 | --- | --- |
-| Docker 镜像 | `environments.json` 中的 `docker_image`（当前为 `julyai/mywinarena:v1`）。镜像内的共享文件夹服务把 `/shared`→D、`/upstream`→E、`/project`→F、`/recordings`→G 发布给 Windows |
-| 启动脚本 | `scripts/start_windows.sh` 只读挂载到 `/opt/vm-manager/start_windows.sh`，以 `/bin/bash` 执行。增量盘 `/storage/data.qcow2` 已存在时跳过初始化（重新启动后保留 C 盘），否则用 `$BASE_IMG`/`$BASE_FORMAT` 创建；把停止信号转发给 Windows，使其正常关机 |
-| 基础磁盘 | `base_storage/base_img`，只读挂载到 `/base_storage`。C 盘是容器内 `/storage/data.qcow2` 上的增量：停止后保留，删除虚拟机时随容器一起删除 |
+| Docker 镜像 | `environments.json` 中的 `docker_image`：单个基础盘的环境用 `vmanager:1.0`（构建见 `docker/`），基础盘 + 差分盘的环境用 `vmanager:1.1`（构建见 `docker/runtime11/`）。镜像内的共享文件夹服务把 `/shared`→D、`/upstream`→E、`/project`→F、`/recordings`→G 发布给 Windows |
+| 启动脚本 | `scripts/start_windows.sh` 只读挂载到 `/opt/vm-manager/start_windows.sh`，以 `/bin/bash` 执行。增量盘 `/storage/data.qcow2` 已存在时跳过初始化（重新启动后保留 C 盘），否则复制 `/base_storage/windows*` 启动文件，并以 `/base_storage/$BASE_IMG`（格式 `$BASE_FORMAT`）为后备盘创建增量盘；把停止信号转发给 Windows，使其正常关机 |
+| 基础磁盘 | `base_storage` 目录只读挂载到 `/base_storage`。单个基础盘的环境传 `BASE_IMG=<base_img>`、`BASE_FORMAT=<base_format>`。差分盘环境传 `BASE_IMG=<diff_img>`、`BASE_FORMAT=qcow2`，磁盘链为 C 盘增量 → 差分盘 → `/base_storage/<base_img>`；差分盘目录里的每个 `windows*` 文件再逐个只读挂载到 `/base_storage/` 下的同名文件上，启动脚本复制的就是这一份。C 盘是容器内 `/storage/data.qcow2` 上的增量：停止后保留，删除虚拟机时随容器一起删除 |
 | 容器端口 | VNC 8006、RDP 3389、Agent 5000。宿主机端口由 Docker 随机分配，**每次启动都可能变化**；Agent 端口始终发布，VNC/RDP 按 `expose` 决定 |
 | Agent 服务（虚拟机内） | 健康检查：`GET http://127.0.0.1:<agent 端口><probe_path>` 返回 HTTP 200，且 JSON 中 `status == "Probe successful"`；同时开放的 VNC 返回 2xx/3xx、RDP 能建立 TCP 连接 |
 | 采集接口（由 Agent 提供） | 开始：`POST {recorder_start_path}`，请求体 `{"recording_id","output_dir":"G:\\rec_xxx","project_id","task_id","vm_id","chat_id"}`，以 HTTP 200 表示成功，对同一个 `recording_id` 重复调用不会重复启动；停止：`POST {recorder_stop_path}`，请求体 `{"recording_id"}`，以 HTTP 200 表示采集进程已经结束、文件已经写完，重复调用不出错。超时为 `recorder_timeout_seconds` |

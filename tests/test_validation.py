@@ -1,4 +1,6 @@
 """校验与错误码：每个错误码至少一个用例；非法 ID；校验失败不留下记录和目录。"""
+import os
+
 import pytest
 
 from conftest import error_code
@@ -143,6 +145,17 @@ def test_host_not_ready_on_create(h, breaker, missing):
     resp = h.create()
     assert resp.status_code == 503 and error_code(resp) == "HOST_NOT_READY"
     assert resp.json()["error"]["details"] == {"missing": missing}
+    assert_nothing_written(h)
+
+
+@pytest.mark.parametrize("disk", ["base_c.img", "soft-c/data.qcow2"])
+def test_host_not_ready_without_diff_env_disk(h, disk):
+    """差分盘环境的基础盘或差分盘缺失，都报 base_disk。"""
+    h.add_diff_environment()
+    os.remove(f"{h.base_storage}/{disk}")
+    resp = h.create(environment_id="env-c")
+    assert resp.status_code == 503 and error_code(resp) == "HOST_NOT_READY"
+    assert resp.json()["error"]["details"] == {"missing": ["base_disk"]}
     assert_nothing_written(h)
 
 

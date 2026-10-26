@@ -473,6 +473,27 @@ def test_container_arguments(h):
     assert detail["mounts"]["upstreams"] == [{"task_id": "tA", "workspace_id": up, "path": "E:\\tA"}]
 
 
+def test_container_arguments_diff_disk(h):
+    """差分盘环境：C 盘建在差分盘上，差分盘目录的 windows* 启动文件覆盖 /base_storage 下的同名文件。"""
+    folder = h.add_diff_environment()
+    vm_id = h.create_ok(environment_id="env-c")
+    h.rounds(1)
+    c = h.backend.containers[h.vm(vm_id)["container_id"]]
+    assert c["environment"] == {"RAM_SIZE": "8G", "CPU_CORES": "4", "BASE_IMG": "soft-c/data.qcow2",
+                                "BASE_FORMAT": "qcow2"}
+    assert c["volumes"][h.base_storage] == {"bind": "/base_storage", "mode": "ro"}
+    boot_files = {path: mount for path, mount in c["volumes"].items() if path.startswith(folder)}
+    assert boot_files == {
+        f"{folder}/windows.mac": {"bind": "/base_storage/windows.mac", "mode": "ro"},
+        f"{folder}/windows_secure.tpm": {"bind": "/base_storage/windows_secure.tpm", "mode": "ro"},
+    }
+    assert h.status(vm_id) == "starting"
+    environments = h.client.get("/v1/environments").json()["data"]["items"]
+    assert environments[2] == {"environment_id": "env-c", "os": "windows11",
+                               "software": [{"name": "KiCad", "version": "10.0.7"}],
+                               "min_spec": {"cpu_cores": 2, "ram_gb": 2}}
+
+
 def test_vm_detail_fields(h):
     vm_id = h.create_ok(chat_id="chat_01")
     queued = h.detail(vm_id)

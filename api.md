@@ -107,6 +107,14 @@ curl http://<ip>:<port>/v1/environments
           {"name": "AutoCAD", "version": "2026"}
         ],
         "min_spec": {"cpu_cores": 4, "ram_gb": 8}
+      },
+      {
+        "environment_id": "win11-kicad10.0.7",
+        "os": "windows11",
+        "software": [
+          {"name": "KiCad", "version": "10.0.7"}
+        ],
+        "min_spec": {"cpu_cores": 4, "ram_gb": 8}
       }
     ]
   }
@@ -1271,4 +1279,4 @@ curl -X POST http://<ip>:<port>/v1/recordings/rec_9c0d1e2f/stop
 | 500 | RECORDING_STOP_FAILED | 虚拟机内的采集程序停止失败，可再次调用重试 | `recording_id` |
 | 500 | INTERNAL_ERROR | 服务内部错误 | null |
 | 503 | DOCKER_UNAVAILABLE | Docker 服务不可用，请稍后重试 | null |
-| 503 | HOST_NOT_READY | 宿主机环境未就绪 | `missing`：缺少的项，可能为 `kvm`、`image`、`base_disk` |
+| 503 | HOST_NOT_READY | 宿主机环境未就绪 | `missing`：缺少的项，可能为 `kvm`、`image`、`base_disk`（环境的基础磁盘或差分盘不存在） |

@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 
 VM_STATUSES = ("queued", "creating", "starting", "running", "stopping", "stopped", "deleting", "failed")
 SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "start_windows.sh")
+BASE_STORAGE_IN_CONTAINER = "/base_storage"
 RETRY_INTERVAL_SECONDS = 60
 # A running VM fails only after its agent service has been unreachable this long (settings health_failure_seconds):
 # Windows restarting inside the VM takes 1-3 minutes, during which the container keeps running.
@@ -29,6 +30,22 @@ def _docker_unavailable():
 
 def _vm_busy(status):
     return ApiError(409, "VM_BUSY", "虚拟机正在创建、停止或删除中，请稍后重试", {"status": status})
+
+
+def disk_paths(env):
+    """环境用到的磁盘文件（宿主机路径）：基础盘，有差分盘时再加上差分盘。"""
+    paths = [os.path.join(env["base_storage"], env["base_img"])]
+    if env.get("diff_img"):
+        paths.append(os.path.join(env["base_storage"], env["diff_img"]))
+    return paths
+
+
+def diff_boot_files(env):
+    """差分盘所在目录里的 windows* 启动文件名（TPM 状态等，是装软件的那台虚拟机留下的）。
+    容器里逐个只读挂载到 /base_storage 下的同名文件上，start_windows.sh 复制的就是这一份。"""
+    folder = os.path.join(env["base_storage"], os.path.dirname(env["diff_img"]))
+    return sorted(name for name in os.listdir(folder)
+                  if name.startswith("windows") and os.path.isfile(os.path.join(folder, name)))
 
 
 class VmManager:
@@ -99,13 +116,13 @@ class VmManager:
         return True
 
     def host_missing(self, env):
-        """KVM、镜像、基础磁盘中不可用的项。检查镜像需要 Docker，无法连接时抛 DockerUnavailable。"""
+        """KVM、镜像、磁盘（基础盘和差分盘）中不可用的项。检查镜像需要 Docker，无法连接时抛 DockerUnavailable。"""
         missing = []
         if not self.backend.kvm_available():
             missing.append("kvm")
         if not self.backend.image_exists(env["docker_image"]):
             missing.append("image")
-        if not self.backend.file_exists(os.path.join(env["base_storage"], env["base_img"])):
+        if not all(self.backend.file_exists(path) for path in disk_paths(env)):
             missing.append("base_disk")
         return missing
 
@@ -448,7 +465,7 @@ class VmManager:
         expose = json.loads(vm["expose"])
         project_id, vm_id = vm["project_id"], vm["vm_id"]
         volumes = {
-            env["base_storage"]: {"bind": "/base_storage", "mode": "ro"},
+            env["base_storage"]: {"bind": BASE_STORAGE_IN_CONTAINER, "mode": "ro"},
             self.workspaces.task_dir(project_id, vm["task_id"]): {"bind": "/shared", "mode": "rw"},
             self.workspaces.shared_dir(project_id): {"bind": "/project", "mode": "rw"},
             self.workspaces.recordings_dir(project_id, vm_id): {"bind": "/recordings", "mode": "rw"},
@@ -458,6 +475,13 @@ class VmManager:
             volumes[self.workspaces.task_dir(project_id, upstream["task_id"])] = {
                 "bind": f"/upstream/{upstream['task_id']}", "mode": "ro",
             }
+        boot_img, boot_format = env["base_img"], env["base_format"]
+        if env.get("diff_img"):
+            # C 盘增量建在差分盘上；差分盘自己的后备盘 /base_storage/<base_img> 在同一个挂载里
+            boot_img, boot_format = env["diff_img"], "qcow2"
+            folder = os.path.join(env["base_storage"], os.path.dirname(env["diff_img"]))
+            for name in diff_boot_files(env):
+                volumes[os.path.join(folder, name)] = {"bind": f"{BASE_STORAGE_IN_CONTAINER}/{name}", "mode": "ro"}
         publish_ports = [AGENT_PORT]
         if expose["vnc"]:
             publish_ports.append(VNC_PORT)
@@ -470,8 +494,8 @@ class VmManager:
             "environment": {
                 "RAM_SIZE": f"{vm['ram_gb']}G",
                 "CPU_CORES": str(vm["cpu_cores"]),
-                "BASE_IMG": env["base_img"],
-                "BASE_FORMAT": env["base_format"],
+                "BASE_IMG": boot_img,
+                "BASE_FORMAT": boot_format,
             },
             "volumes": volumes,
             "publish_ports": publish_ports,

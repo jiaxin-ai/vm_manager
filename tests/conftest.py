@@ -231,6 +231,22 @@ def make_environments(base_storage):
     ]
 
 
+def make_diff_environment(base_storage):
+    """基础盘 + 差分盘的环境：差分盘 soft-c/data.qcow2 的后备盘是 /base_storage/base_c.img。磁盘文件由调用方准备。"""
+    return {
+        "environment_id": "env-c",
+        "os": "windows11",
+        "software": [{"name": "KiCad", "version": "10.0.7"}],
+        "min_spec": {"cpu_cores": 2, "ram_gb": 2},
+        "docker_image": "img:v1",
+        "base_storage": base_storage,
+        "base_img": "base_c.img",
+        "base_format": "raw",
+        "diff_img": "soft-c/data.qcow2",
+        "probe_path": "/probe",
+    }
+
+
 class Harness:
     def __init__(self, tmp_path, executor=None, **settings_overrides):
         self.tmp = tmp_path
@@ -265,6 +281,18 @@ class Harness:
         """模拟服务重启：内存状态（锁、线程）丢失，数据库和容器保留。"""
         self._build()
         self.vms.recover()
+
+    def add_diff_environment(self):
+        """加上差分盘环境 env-c：base_c.img、soft-c/ 下的差分盘、两个 windows* 启动文件和一个无关文件。"""
+        folder = os.path.join(self.base_storage, "soft-c")
+        os.makedirs(folder)
+        for path in ("base_c.img", "soft-c/data.qcow2", "soft-c/windows.mac", "soft-c/windows_secure.tpm",
+                     "soft-c/notes.txt"):
+            open(os.path.join(self.base_storage, path), "w").close()
+        env = make_diff_environment(self.base_storage)
+        self.environments.append(env)
+        self.vms.environments[env["environment_id"]] = env
+        return folder
 
     def _fake_chattr(self, flag, path):
         self.chattr_calls.append((flag, path))

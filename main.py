@@ -19,7 +19,7 @@ from backend import Backend
 from common import KeyedLocks
 from db import Database
 from recording_manager import RecordingManager
-from vm_manager import VmManager
+from vm_manager import BASE_STORAGE_IN_CONTAINER, VmManager, diff_boot_files
 from workspace_manager import WorkspaceManager
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +87,29 @@ def check_chattr(data_root):
         os.remove(path)
 
 
+def qemu_img_info(qemu_img, path):
+    result = subprocess.run([qemu_img, "info", "-U", "--output=json", path], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise StartupError(f"qemu-img info 失败：{path}：{result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def check_diff_disk(qemu_img, env):
+    """差分盘是 qcow2、未损坏，记录的后备盘正好是容器里的 /base_storage/<base_img>，后备格式与 base_format 一致。"""
+    path = os.path.join(env["base_storage"], env["diff_img"])
+    info = qemu_img_info(qemu_img, path)
+    if info["format"] != "qcow2":
+        raise StartupError(f"差分盘 {path} 的实际格式为 {info['format']}，应为 qcow2")
+    if ((info.get("format-specific") or {}).get("data") or {}).get("corrupt"):
+        raise StartupError(f"差分盘 {path} 带有损坏标记")
+    backing = f"{BASE_STORAGE_IN_CONTAINER}/{env['base_img']}"
+    if info.get("backing-filename") != backing:
+        raise StartupError(f"差分盘 {path} 的后备盘为 {info.get('backing-filename')}，应为 {backing}")
+    if info.get("backing-filename-format") != env["base_format"]:
+        raise StartupError(f"差分盘 {path} 的后备盘格式为 {info.get('backing-filename-format')}，"
+                           f"与 base_format={env['base_format']} 不一致")
+
+
 def startup_checks(settings, environments, backend):
     """4.3：任一项不满足，服务启动失败。"""
     ids = [env["environment_id"] for env in environments]
@@ -95,6 +118,10 @@ def startup_checks(settings, environments, backend):
     for env in environments:
         if not env["base_img"] or "/" in env["base_img"] or ".." in env["base_img"]:
             raise StartupError(f"base_img 只能是文件名：{env['base_img']!r}")
+        if "diff_img" in env:
+            parts = env["diff_img"].split("/") if isinstance(env["diff_img"], str) else []
+            if len(parts) != 2 or any(part in ("", ".", "..") for part in parts):
+                raise StartupError(f"diff_img 只能是「子目录/文件名」：{env['diff_img']!r}")
 
     if not settings["access_host"] or settings["access_host"] == PLACEHOLDER_HOST:
         raise StartupError("access_host 仍是占位值，请填写调用方能访问到的宿主机 IP 或域名")
@@ -111,21 +138,31 @@ def startup_checks(settings, environments, backend):
         path = os.path.join(env["base_storage"], env["base_img"])
         if not os.path.isfile(path):
             raise StartupError(f"基础磁盘不存在：{path}")
+        if "diff_img" in env:
+            path = os.path.join(env["base_storage"], env["diff_img"])
+            if not os.path.isfile(path):
+                raise StartupError(f"差分盘不存在：{path}")
+            # 启动文件在容器里覆盖挂载到 /base_storage 下的同名文件上：同名文件必须已经存在，
+            # 否则 Docker 要在只读挂载里新建挂载点，创建容器会失败
+            for name in diff_boot_files(env):
+                if not os.path.isfile(os.path.join(env["base_storage"], name)):
+                    raise StartupError(f"{os.path.dirname(path)} 里的 {name} 在 {env['base_storage']} 下没有同名文件")
 
     check_chattr(settings["data_root"])
 
     qemu_img = shutil.which("qemu-img")
     if qemu_img is None:
+        if any("diff_img" in env for env in environments):
+            raise StartupError("宿主机没有 qemu-img，无法检查差分盘")
         log.warning("宿主机没有 qemu-img，跳过基础磁盘格式检查")
         return
     for env in environments:
         path = os.path.join(env["base_storage"], env["base_img"])
-        result = subprocess.run([qemu_img, "info", "-U", "--output=json", path], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise StartupError(f"qemu-img info 失败：{path}：{result.stderr.strip()}")
-        actual = json.loads(result.stdout)["format"]
+        actual = qemu_img_info(qemu_img, path)["format"]
         if actual != env["base_format"]:
             raise StartupError(f"{path} 的实际格式为 {actual}，与 base_format={env['base_format']} 不一致")
+        if "diff_img" in env:
+            check_diff_disk(qemu_img, env)
 
 
 def main():

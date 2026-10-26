@@ -24,5 +24,65 @@
     "base_img": "data_v2_autocad_sw_ansys.img",
     "base_format": "raw",
     "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-kicad10.0.7",
+    "os": "windows11",
+    "software": [{"name": "KiCad", "version": "10.0.7"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "vmanager:1.1",
+    "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "kicad-10.0.7/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-ltspice26.1.1",
+    "os": "windows11",
+    "software": [{"name": "LTspice", "version": "26.1.1"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "vmanager:1.1",
+    "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "ltspice-26.1.1/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-blender5.2.3-cpu",
+    "os": "windows11",
+    "software": [{"name": "Blender", "version": "5.2.3"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "vmanager:1.1",
+    "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "blender-5.2.3-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-paraview6.2.0-cpu",
+    "os": "windows11",
+    "software": [{"name": "ParaView", "version": "6.2.0"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "vmanager:1.1",
+    "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "paraview-6.2.0-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-openmodelica1.27.1-cpu",
+    "os": "windows11",
+    "software": [{"name": "OpenModelica", "version": "1.27.1"}],
+    "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+    "docker_image": "vmanager:1.1",
+    "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "openmodelica-1.27.1-cpu/data.qcow2",
+    "probe_path": "/probe"
   }
 ]
