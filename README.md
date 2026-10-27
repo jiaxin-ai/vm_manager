@@ -51,8 +51,56 @@ python3 -m venv .venv
         └── windows*                   这个软件自己的启动文件
     ```
 
-  **基础盘和差分盘都不得修改或替换**：差分盘建立在基础盘上，基础盘一变，所有差分盘都会损坏；虚拟机的 C 盘又建立在差分盘上。不要再把软件子目录当作虚拟机的 `/storage` 开机（例如 WindowsAgentArena 的 `myscripts/start_vms.sh`），那样会直接写差分盘。要更新软件，就复制出新的磁盘文件或子目录，再新增一个环境条目。
+  **上线后的基础盘和差分盘都不得修改或替换**：差分盘建立在基础盘上，基础盘一变，所有差分盘都会损坏；虚拟机的 C 盘又建立在差分盘上，差分盘一变，建立在它上面的虚拟机都会损坏。上线后不要再把软件子目录当作 `/storage` 直接开机（例如用 WindowsAgentArena 的 `myscripts/start_vms.sh`），那样会直接写差分盘。要更新软件，就做一个新的子目录，按下面的「新增软件环境」新增一个条目。虚拟机本身不会写差分盘：每台虚拟机的 C 盘都是容器里新建的增量盘，`base_storage` 只读挂载。
 - 配置在启动时读取，修改后需要重启服务。每台虚拟机创建时会保存一份环境配置副本，之后修改配置不影响已有的虚拟机。
+
+### 新增软件环境
+
+以「基础盘 + 差分盘」的形式（vmanager:1.1）新增一个软件。vm_manager 这边只需要在 `environments.json` 里加一项并重启服务；Studio 不用改，它从 `GET /v1/environments` 读取环境列表。前提是差分盘已经按下面的要求做好。
+
+1. **做差分盘**：在 `base_storage` 下新建一个子目录（例如 `mujoco-3.17.0-cpu`），用 vmanager:1.1 开一台制作用的虚拟机：`base_storage` 只读挂载到 `/base_storage`，子目录挂载到 `/storage`；以 `/base_storage/data_base.img`（raw）为后备盘创建 `/storage/data.qcow2`，并把根目录的 `windows*` 启动文件复制进子目录。WindowsAgentArena 的 `myscripts/start_vms.sh` 就是这样做的。在这台虚拟机里安装软件。
+2. **映射盘符**：vm_manager 只提供 Samba 共享，D、E、F、G 盘要由 Windows 自己映射。关机前，在这台虚拟机里以登录用户（Docker）执行：
+
+   ```bat
+   net use D: \\host.lan\Data /persistent:yes
+   net use E: \\host.lan\Upstream /persistent:yes
+   net use F: \\host.lan\Project /persistent:yes
+   net use G: \\host.lan\Recordings /persistent:yes
+   ```
+
+   映射保存在这个用户的 `HKCU\Network` 里，之后每次登录都会自动恢复。少了这一步，虚拟机照样能开机，但没有 D、E、F、G 盘。
+3. **正常关机，之后不再直接启动这块盘**：执行 `docker stop -t 300 <制作用的容器>`，等容器日志里出现 `Shutdown completed!` 再删除容器。从此不要再直接启动这个子目录。
+4. **检查差分盘**：`qemu-img info <base_storage>/<子目录>/data.qcow2` 应当显示 `file format: qcow2`、`backing file: /base_storage/data_base.img`、`backing file format: raw`。
+5. **加环境条目**：`environments.json` 属于 root，要用 sudo 编辑。追加一项，例如：
+
+   ```json
+   {
+     "environment_id": "win11-kicad10.0.7",
+     "os": "windows11",
+     "software": [{"name": "KiCad", "version": "10.0.7"}],
+     "min_spec": {"cpu_cores": 4, "ram_gb": 8},
+     "docker_image": "vmanager:1.1",
+     "base_storage": "/data/hdd/codes/WindowsAgentArena/src/win-arena-container/vm/storage",
+     "base_img": "data_base.img",
+     "base_format": "raw",
+     "diff_img": "kicad-10.0.7/data.qcow2",
+     "probe_path": "/probe"
+   }
+   ```
+
+   `environment_id` 沿用「win11-软件名版本」的写法，CPU 版末尾加 `-cpu`。上线后不要再改 ID：Studio 和已有的虚拟机都靠它识别环境。`min_spec` 是创建虚拟机时允许的最低配置。
+6. **先单独跑一遍启动前检查**：任何一个条目不通过，整个服务都会启动失败，所有环境都不可用。所以重启前先执行：
+
+   ```bash
+   cd /data/hdd/codes/HarnessStudio/vm_manager && sudo .venv/bin/python -c 'import main; from backend import Backend; s, e = main.load_config("settings.json", "environments.json"); main.startup_checks(s, e, Backend()); print("启动前检查通过，环境数", len(e))'
+   ```
+
+   没有输出「启动前检查通过」时，按报错修改，不要重启。
+7. **重启服务**（见下面的「启动与停止」），然后用 `curl -s http://127.0.0.1:8000/v1/environments` 确认新环境已经出现。停止服务不会停止已经在运行的虚拟机。
+8. **在 Studio 里验证**：在任务的软件区点「添加软件环境」，能看到新环境；启动一台，确认它进入运行状态、D、E、F、G 盘都在，然后删除这台虚拟机。
+9. **Agent 看到的分类**（可选）：Studio 按软件名给环境分类（机械设计、工程仿真、电子设计、建模渲染、二维制图），不认识的软件名归为机械设计。要改分类，在 harnessstudio 的 `plugins/studio/src/vm-seat.ts` 里给 `categoryRules` 加一条，然后重新部署 Studio。
+
+「单个基础盘」形式（vmanager:1.0）的环境同样是加条目、检查、重启，只是不写 `diff_img`；基础盘同样必须已经配置好 D、E、F、G 映射。
 
 ### 启动与停止
 
@@ -110,6 +158,7 @@ sudo kill -TERM <pid>
 | Docker 镜像 | `environments.json` 中的 `docker_image`：单个基础盘的环境用 `vmanager:1.0`（构建见 `docker/`），基础盘 + 差分盘的环境用 `vmanager:1.1`（构建见 `docker/runtime11/`）。镜像内的共享文件夹服务把 `/shared`→D、`/upstream`→E、`/project`→F、`/recordings`→G 发布给 Windows |
 | 启动脚本 | `scripts/start_windows.sh` 只读挂载到 `/opt/vm-manager/start_windows.sh`，以 `/bin/bash` 执行。增量盘 `/storage/data.qcow2` 已存在时跳过初始化（重新启动后保留 C 盘），否则复制 `/base_storage/windows*` 启动文件，并以 `/base_storage/$BASE_IMG`（格式 `$BASE_FORMAT`）为后备盘创建增量盘；把停止信号转发给 Windows，使其正常关机 |
 | 基础磁盘 | `base_storage` 目录只读挂载到 `/base_storage`。单个基础盘的环境传 `BASE_IMG=<base_img>`、`BASE_FORMAT=<base_format>`。差分盘环境传 `BASE_IMG=<diff_img>`、`BASE_FORMAT=qcow2`，磁盘链为 C 盘增量 → 差分盘 → `/base_storage/<base_img>`；差分盘目录里的每个 `windows*` 文件再逐个只读挂载到 `/base_storage/` 下的同名文件上，启动脚本复制的就是这一份。C 盘是容器内 `/storage/data.qcow2` 上的增量：停止后保留，删除虚拟机时随容器一起删除 |
+| Windows 盘符 | 本服务只通过镜像发布 Samba 共享（`\\host.lan\Data`、`Upstream`、`Project`、`Recordings`），D、E、F、G 由磁盘里的 Windows 在登录时自行映射。1.0 的两个基础盘已经配置；1.1 的五个差分盘在 2026-10-27 用 `net use … /persistent:yes` 补上了映射（见「新增软件环境」第 2 步） |
 | 容器端口 | VNC 8006、RDP 3389、Agent 5000。宿主机端口由 Docker 随机分配，**每次启动都可能变化**；Agent 端口始终发布，VNC/RDP 按 `expose` 决定 |
 | Agent 服务（虚拟机内） | 健康检查：`GET http://127.0.0.1:<agent 端口><probe_path>` 返回 HTTP 200，且 JSON 中 `status == "Probe successful"`；同时开放的 VNC 返回 2xx/3xx、RDP 能建立 TCP 连接 |
 | 采集接口（由 Agent 提供） | 开始：`POST {recorder_start_path}`，请求体 `{"recording_id","output_dir":"G:\\rec_xxx","project_id","task_id","vm_id","chat_id"}`，以 HTTP 200 表示成功，对同一个 `recording_id` 重复调用不会重复启动；停止：`POST {recorder_stop_path}`，请求体 `{"recording_id"}`，以 HTTP 200 表示采集进程已经结束、文件已经写完，重复调用不出错。超时为 `recorder_timeout_seconds` |
