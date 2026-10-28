@@ -6,7 +6,7 @@
 ## 构建
 
 ```bash
-python3 /data/hdd/codes/vm_manager/docker/runtime11/build.py
+python3 /data/hdd/codes/HarnessStudio/vm_manager/docker/runtime11/build.py
 ```
 
 默认原样复制以下完整目录（不改原文件），在临时构建目录计算逐文件 SHA256 后 COPY 进新镜像：
@@ -91,7 +91,7 @@ Copy-Item -LiteralPath 'C:\OEM\on-logon.ps1.manual-backup' -Destination 'C:\OEM\
 ```bash
 python3 -m venv /tmp/vmanager11-check-tools
 /tmp/vmanager11-check-tools/bin/pip install smbprotocol
-/tmp/vmanager11-check-tools/bin/python /data/hdd/codes/vm_manager/docker/runtime11/verify.py
+/tmp/vmanager11-check-tools/bin/python /data/hdd/codes/HarnessStudio/vm_manager/docker/runtime11/verify.py
 ```
 
 该检查校验镜像内所有文件哈希，确认无宿主挂载，比较 1.0/1.1 的入口、环境和关键启动脚本，启动独立 Samba 实例测试 Runtime 可读/拒绝写入，并核对四个共享路径及读写属性。完整 Windows 登录、UNC 名称解析、盘符和 API 只能由用户在 VM 内最终验证：
