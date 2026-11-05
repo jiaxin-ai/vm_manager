@@ -110,13 +110,14 @@ class FakeBackend:
                         "ports": c["ports"] if c["running"] else {"vnc": None, "rdp": None, "agent": None}}
         return None
 
-    def create_container(self, vm_id, image, environment, volumes, publish_ports, cpu_cores, mem_bytes):
+    def create_container(self, vm_id, image, environment, volumes, publish_ports, cpu_cores, mem_bytes, labels=None):
         self._check()
         if self.fail_create:
             raise RuntimeError("create failed")
         self._seq += 1
         cid = f"cid{self._seq:04d}{vm_id}"
         self.containers[cid] = {
+            "labels": labels or {},
             "vm_id": vm_id, "running": False, "ports": {}, "image": image, "environment": environment,
             "volumes": volumes, "publish_ports": publish_ports, "cpu_cores": cpu_cores, "mem_bytes": mem_bytes,
         }
@@ -126,7 +127,8 @@ class FakeBackend:
         """模拟服务之外已经存在的带 label 容器。"""
         self._seq += 1
         cid = f"cid{self._seq:04d}{vm_id}"
-        self.containers[cid] = {"vm_id": vm_id, "running": running, "ports": self._ports([5000, 8006, 3389]),
+        self.containers[cid] = {
+            "labels": {}, "vm_id": vm_id, "running": running, "ports": self._ports([5000, 8006, 3389]),
                                 "publish_ports": [5000, 8006, 3389]}
         return cid
 

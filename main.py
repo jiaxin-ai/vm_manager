@@ -197,7 +197,18 @@ def main():
     vms.start_inspector()
     log.info("VM Manager listening on %s:%s (access_host=%s, data_root=%s)",
              settings["listen_host"], settings["listen_port"], settings["access_host"], data_root)
-    app = create_app(vms, workspaces, recordings, on_shutdown=vms.stop_inspector)
+    token = None
+    token_file = os.environ.get("VM_MANAGER_TOKEN_FILE") or settings.get("auth_token_file")
+    if token_file:
+        try:
+            with open(resolve(token_file), encoding="utf-8") as f:
+                token = f.read().strip()
+        except OSError as exc:
+            raise StartupError(f"无法读取 auth_token_file：{token_file}：{exc}")
+        if not token:
+            raise StartupError("auth_token_file 为空")
+        log.info("bearer authentication enabled")
+    app = create_app(vms, workspaces, recordings, on_shutdown=vms.stop_inspector, auth_token=token)
     uvicorn.run(app, host=settings["listen_host"], port=settings["listen_port"], workers=1, log_config=None)
 
 

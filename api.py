@@ -2,6 +2,7 @@
 
 路由只做参数校验和结果转换，业务逻辑交给各 manager。Docker SDK 是同步调用，路由用普通 def。
 """
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Generic, List, Literal, Optional, TypeVar
@@ -133,6 +134,23 @@ class HostResources(BaseModel):
     memory_gb: Quantity
     disk_gb: DiskQuantity
     vms: VmCounts
+
+
+class ProjectUsage(BaseModel):
+    project_id: str
+    queued: int
+    creating: int
+    starting: int
+    running: int
+    stopping: int
+    stopped: int
+    failed: int
+    total: int
+    active: int
+
+
+class ProjectUsageList(BaseModel):
+    projects: List[ProjectUsage]
 
 
 class VmSummary(BaseModel):
@@ -307,7 +325,7 @@ def _validation_error(fields):
 # ==================== 路由 ====================
 
 
-def create_app(vms, workspaces, recordings, on_shutdown=None):
+def create_app(vms, workspaces, recordings, on_shutdown=None, auth_token=None):
     @asynccontextmanager
     async def lifespan(app):
         yield
@@ -329,6 +347,17 @@ def create_app(vms, workspaces, recordings, on_shutdown=None):
         log.exception("unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
         return _error_response(500, "INTERNAL_ERROR", "服务内部错误")
 
+    if auth_token:
+        # The host service is normally reachable only from Studio. When a token file is configured, every route
+        # (including /docs) requires the same bearer token Studio sends.
+        expected = f"Bearer {auth_token}"
+
+        @app.middleware("http")
+        async def require_token(request: Request, call_next):
+            if not hmac.compare_digest(request.headers.get("authorization", ""), expected):
+                return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "未授权"}})
+            return await call_next(request)
+
     # ---------- 1 软件环境与宿主机资源 ----------
 
     @app.get("/v1/environments", response_model=Data[Items[Environment]])
@@ -340,6 +369,10 @@ def create_app(vms, workspaces, recordings, on_shutdown=None):
         return {"data": vms.host_resources()}
 
     # ---------- 2 虚拟机 ----------
+
+    @app.get("/v1/usage", response_model=Data[ProjectUsageList])
+    def project_usage():
+        return {"data": vms.usage()}
 
     @app.get("/v1/vms", response_model=Data[Items[VmSummary]])
     def list_vms(project_id: Optional[str] = None, task_id: Optional[str] = None, status: Optional[str] = None):

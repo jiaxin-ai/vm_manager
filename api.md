@@ -4,13 +4,15 @@
 
 服务地址：`<ip>:<port>`；API 前缀：`/v1`；请求和响应均为 JSON；时间均为 ISO 8601 格式的 UTC 时间。
 
+可选鉴权：启动时配置 `auth_token_file`（或 `VM_MANAGER_TOKEN_FILE`）后，所有接口（含 `/docs`、`/openapi.json`）都要求 `Authorization: Bearer <令牌>`，否则返回 401 `UNAUTHORIZED`。未配置时与旧版一致。
+
 成功时 HTTP 状态码为 `200`，响应体为 `{"data": ...}`；失败时 HTTP 状态码为 4xx / 5xx，响应体为：
 
 `{"error": {"code": ..., "message": ..., "details": ...}}`
 
 ## 接口总览
 
-V1 共 18 个基础接口，分为 4 组。
+V1 共 19 个基础接口，分为 4 组。
 
 ### 1 查询可用软件环境与宿主机资源
 
@@ -18,6 +20,13 @@ V1 共 18 个基础接口，分为 4 组。
 | --- | --- | --- | --- | --- |
 | 1 | 查询可用软件环境 | GET | `/v1/environments` | 查询可用的软件环境，包括操作系统、软件组合与版本、最低资源配置 |
 | 2 | 查询宿主机资源 | GET | `/v1/host/resources` | 查询宿主机 CPU、内存、磁盘的总量、已占用量和可分配量 |
+| 3 | 按项目统计虚拟机 | GET | `/v1/usage` | 按项目汇总各状态的虚拟机数量和 active（排队/启动中/运行中/停止中）数量 |
+
+### 1.3 按项目统计虚拟机
+
+`GET /v1/usage`
+
+返回 `{"data": {"projects": [{"project_id", "queued", "creating", "starting", "running", "stopping", "stopped", "failed", "total", "active"}]}}`。`active` 是 `queued`、`creating`、`starting`、`running`、`stopping` 之和；`stopped` 和 `failed` 不计入。Studio 的配额对账和平台资源总览使用这个口径。容器同时带有 `harnessstudio.project` 和 `harnessstudio.task` 标签，用于核对游离容器。
 
 ### 2 虚拟机管理
 

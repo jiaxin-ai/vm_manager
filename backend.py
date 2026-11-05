@@ -106,7 +106,7 @@ class Backend:
             raise DockerUnavailable(str(exc)) from exc
         return _container_info(found[0].attrs) if found else None
 
-    def create_container(self, vm_id, image, environment, volumes, publish_ports, cpu_cores, mem_bytes):
+    def create_container(self, vm_id, image, environment, volumes, publish_ports, cpu_cores, mem_bytes, labels=None):
         container = self._docker().containers.create(
             image=image,
             name=f"vm-{vm_id}",
@@ -119,7 +119,7 @@ class Backend:
             volumes=volumes,
             privileged=True,
             cap_add=["NET_ADMIN"],
-            labels={LABEL_MANAGED: "true", LABEL_VM_ID: vm_id},
+            labels={LABEL_MANAGED: "true", LABEL_VM_ID: vm_id, **(labels or {})},
             nano_cpus=cpu_cores * 10**9,
             mem_limit=mem_bytes,
             memswap_limit=mem_bytes,

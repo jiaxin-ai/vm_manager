@@ -460,6 +460,21 @@ class VmManager:
 
     # ==================== 容器（第 9 节） ====================
 
+    # ==================== 按项目统计 ====================
+
+    def usage(self):
+        """按项目汇总的虚拟机占用；active 是启动中、排队、运行中和停止中的合计。"""
+        counts = {}
+        for vm in self.db.list_vms():
+            item = counts.setdefault(vm["project_id"], {"project_id": vm["project_id"], "queued": 0, "creating": 0,
+                                                         "starting": 0, "running": 0, "stopping": 0, "stopped": 0,
+                                                         "failed": 0, "total": 0, "active": 0})
+            item[vm["status"]] = item.get(vm["status"], 0) + 1
+            item["total"] += 1
+            if vm["status"] in ("queued", "creating", "starting", "running", "stopping"):
+                item["active"] += 1
+        return {"projects": [counts[key] for key in sorted(counts)]}
+
     def _container_args(self, vm):
         env = json.loads(vm["environment_json"])
         expose = json.loads(vm["expose"])
@@ -501,6 +516,8 @@ class VmManager:
             "publish_ports": publish_ports,
             "cpu_cores": vm["cpu_cores"],
             "mem_bytes": mem * GIB,
+            # Reconciliation uses these labels to attribute a hand-started container to its project/task.
+            "labels": {"harnessstudio.project": project_id, "harnessstudio.task": vm["task_id"]},
         }
 
     def _provision(self, vm_id):
