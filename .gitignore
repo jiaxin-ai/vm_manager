@@ -3,3 +3,8 @@ __pycache__/
 .pytest_cache/
 logs/
 *.log
+
+# Local configuration snapshots (keep on this workstation only)
+/settings.json.bak-*
+/environments.json.bak-*
+/environments.json.full

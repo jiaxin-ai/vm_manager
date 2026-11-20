@@ -1,7 +1,7 @@
 {
   "listen_host": "0.0.0.0",
   "listen_port": 8000,
-  "access_host": "10.11.13.84",
+  "access_host": "10.11.12.44",
   "data_root": "/data/hdd/vm_manager",
   "host_reserved_cpu": 2,
   "host_reserved_ram_gb": 4,
@@ -16,5 +16,6 @@
   "stop_timeout_seconds": 120,
   "recorder_start_path": "/recording/start",
   "recorder_stop_path": "/recording/stop",
-  "recorder_timeout_seconds": 60
+  "recorder_timeout_seconds": 60,
+  "auth_token_file": "/data/hdd/codes/HarnessStudio/harnessstudio/.studio/deploy/secrets/vm-manager-token"
 }

@@ -11,6 +11,9 @@ else
   qemu-img create -f qcow2 -F "$BASE_FORMAT" -b "/base_storage/$BASE_IMG" /storage/data.qcow2 \
     || { echo 'ERROR: failed to create data.qcow2'; exit 1; }
 fi
+# The images ship Samba's state and log folders owned by uid 1000. smbd runs as root and refuses them
+# ("invalid ownership on directory /run/samba/msg.lock"), so Windows would get no D/E/F/G and no Runtime share.
+chown -R 0:0 /run/samba /var/log/samba /var/lib/samba /var/cache/samba 2>/dev/null || true
 echo '2. Starting VM...'
 /usr/bin/tini -s /run/entry.sh &
 pid=$!
