@@ -40,6 +40,7 @@ try {
     $old = $null
     if (Test-Path $statePath) { $old = Get-Content $statePath -Raw | ConvertFrom-Json }
     $dirty = Test-Path "$meta\pending.json"
+    Log 'Manifest loaded; comparing installed state'
     $changes = @()
     foreach ($name in @('server', 'trajrec-bundle')) {
         $spec = $manifest.components.$name
@@ -50,8 +51,26 @@ try {
     if ($req.Count -ne 1) { throw 'requirements.txt missing from manifest' }
     $installDeps = $dirty -or -not $old -or $old.requirements -ne $req[0].sha256 -or $old.python -ne "$identity"
     $installRecorder = $dirty -or -not $old -or $old.components.'trajrec-bundle'.hash -ne $manifest.components.'trajrec-bundle'.hash -or $old.python -ne "$identity"
+    # Cached release hashes do not prove that Python packages still exist.
+    $check = "$Share\server\check-dependencies.py"
+    $checkSpec = @($manifest.components.server.files | Where-Object { $_.path -eq 'check-dependencies.py' })
+    if ($checkSpec.Count -ne 1 -or (Get-FileHash -LiteralPath $check -Algorithm SHA256).Hash -ne $checkSpec[0].sha256) { throw 'Dependency checker missing or hash mismatch' }
+    $localCheck = Join-Path $meta 'check-dependencies.py'
+    Copy-Item -LiteralPath $check -Destination $localCheck -Force
+    $check = $localCheck
+    Log 'Checking Agent dependencies (local file)'
+    & $Python $check | Out-Host
+    if ($LASTEXITCODE -ne 0) { Log 'Agent dependency check failed; repairing requirements'; $installDeps = $true }
+    Log 'Checking Recorder dependencies'
+    $recorderPython = 'C:\trajrec\venv\Scripts\python.exe'
+    $recorderCheck = 'import psutil, mss, watchdog, win32api, uiautomation, pynput'
+    if (-not (Test-Path $recorderPython)) { $installRecorder = $true }
+    else {
+        & $recorderPython -c $recorderCheck | Out-Host
+        if ($LASTEXITCODE -ne 0) { Log 'Recorder dependency check failed; repairing installation'; $installRecorder = $true }
+    }
     if ($changes.Count -eq 0 -and -not $installDeps -and -not $installRecorder) {
-        Log 'Package hashes unchanged; synchronization and installation skipped.'
+        Log 'Package hashes unchanged; Agent and Recorder dependency checks passed; installation skipped.'
         exit 0
     }
     $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N')
@@ -107,6 +126,8 @@ try {
             elseif (Test-Path $route) { Remove-Item $route -Force }
         }
     }
+    Checked $Python @($check)
+    Checked $recorderPython @('-c', $recorderCheck)
     $state = @{ components = $manifest.components; requirements = $req[0].sha256; python = "$identity" }
     $state | ConvertTo-Json -Depth 10 | Set-Content "$statePath.new" -Encoding UTF8
     Move-Item "$statePath.new" $statePath -Force

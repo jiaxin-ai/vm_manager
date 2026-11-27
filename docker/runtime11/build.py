@@ -13,20 +13,37 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--server', type=Path, default=Path('/data/hdd/codes/HarnessStudio/server'))
 p.add_argument('--recorder', type=Path, default=Path('/data/hdd/vm_manager/projects/trajrec-test-20261019/shared/trajrec-bundle'))
 p.add_argument('--tag', default='vmanager:1.1')
+p.add_argument('--from-runtime-image', help='Reuse server/recorder shipped in an existing Runtime image when source directories are unavailable')
 a = p.parse_args()
 base = subprocess.check_output(['docker', 'image', 'inspect', 'vmanager:1.0', '--format', '{{.Id}}'], text=True).strip()
 if a.tag == 'vmanager:1.0':
     p.error('Refusing to replace vmanager:1.0')
-for source, required in [(a.server, 'requirements.txt'), (a.server, 'main.py'), (a.recorder, 'recorder/integration/harnessstudio/install_recorder.ps1')]:
-    if not (source / required).is_file():
-        p.error(f'Missing {source / required}')
 with tempfile.TemporaryDirectory(prefix='vmanager11-') as tmp:
     ctx = Path(tmp)
     runtime = ctx / 'runtime'
     runtime.mkdir()
+    if a.from_runtime_image:
+        container = subprocess.check_output(['docker', 'create', a.from_runtime_image], text=True).strip()
+        try:
+            subprocess.run(['docker', 'cp', container + ':/opt/runtime/server', str(runtime / 'server')], check=True)
+            subprocess.run(['docker', 'cp', container + ':/opt/runtime/trajrec-bundle', str(runtime / 'trajrec-bundle')], check=True)
+        finally:
+            subprocess.run(['docker', 'rm', container], check=True)
+    else:
+        for source, required in [(a.server, 'requirements.txt'), (a.server, 'main.py'), (a.recorder, 'recorder/integration/harnessstudio/install_recorder.ps1')]:
+            if not (source / required).is_file():
+                p.error(f'Missing {source / required}; supply source paths or --from-runtime-image vmanager:1.1')
+        shutil.copytree(a.server, runtime / 'server')
+        shutil.copytree(a.recorder, runtime / 'trajrec-bundle')
+    req = runtime / 'server/requirements.txt'
+    original = req.read_text()
+    marker = '# HarnessStudio Windows Agent dependencies'
+    if marker in original:
+        original = original.split(marker)[0]
+    req.write_text(original.rstrip() + '\n\n' + marker + '\n' + (HERE / 'requirements-windows.txt').read_text())
+    shutil.copy2(HERE / 'check-dependencies.py', runtime / 'server/check-dependencies.py')
     manifest = {'schema': 1, 'components': {}}
-    for name, source in [('server', a.server), ('trajrec-bundle', a.recorder)]:
-        shutil.copytree(source, runtime / name)
+    for name in ['server', 'trajrec-bundle']:
         entries = []
         for path in sorted((runtime / name).rglob('*')):
             if path.is_file():

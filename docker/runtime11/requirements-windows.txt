@@ -1,0 +1,6 @@
+# Direct Windows Agent imports missing from the upstream requirements.txt.
+psutil
+pywin32; sys_platform == "win32"
+pywinauto; sys_platform == "win32"
+comtypes; sys_platform == "win32"
+pyperclip

@@ -71,6 +71,8 @@ python3 -m venv .venv
    ```
 
    映射保存在这个用户的 `HKCU\Network` 里，之后每次登录都会自动恢复。少了这一步，虚拟机照样能开机，但没有 D、E、F、G 盘。
+导出前先检查 `Invoke-RestMethod http://127.0.0.1:5000/probe` 返回 `Probe successful`，并实际完成一次录制，确认生成视频、截图和轨迹。新 Runtime 会在登录时检查并修复 Agent / Recorder 依赖；已有 Hook 更新方法见 `docker/runtime11/README.md`。仅能打开软件不代表操作服务可用。
+
 3. **正常关机，之后不再直接启动这块盘**：执行 `docker stop -t 300 <制作用的容器>`，等容器日志里出现 `Shutdown completed!` 再删除容器。从此不要再直接启动这个子目录。
 4. **检查差分盘**：`qemu-img info <base_storage>/<子目录>/data.qcow2` 应当显示 `file format: qcow2`、`backing file: /base_storage/data_base.img`、`backing file format: raw`。
 5. **加环境条目**：`environments.json` 属于 root，要用 sudo 编辑。追加一项，例如：
@@ -196,3 +198,30 @@ sudo kill -TERM <pid>
 - **disk_gb.used 比 df 显示的大**：按规范，`used = total − free`，其中包含文件系统的保留块。
 - **停止要多久**：已开机的 Windows 实测约 7～15 秒；Windows 还在启动时，可能需要接近 `stop_timeout_seconds`。超时后 Docker 会强制结束容器。
 - **想清空测试数据**：先删除虚拟机，停止服务；然后对要删除的项目目录执行 `sudo chattr -R -i`，再删除；如果需要，最后删除 `vmm.db*`。
+
+`settings.json` 的 `access_host` 可设为 `auto`：服务每次启动从物理默认路由网卡检测局域网 IPv4，避开 VPN/TUN 和 Docker 网卡；无法检测则明确报错。固定 IP 或域名仍按原值使用。换网口后重启服务才重新检测；不会自动重启正在运行的虚拟机。
+
+### 独立虚拟机系统盘（2026-11-24）
+
+可选设置 `vm_storage_root` 为 SSD/NVMe 上的绝对目录，系统为新建实例绑定 `<vm_storage_root>/<vm_id>` 到容器 `/storage`；不会迁移已有容器，也不会删除旧盘。未设置时兼容原容器层存储。容量检查同时覆盖此目录所在文件系统。生产设置使用 `/home/ajx/.local/share/harnessstudio/vm-storage`。项目工作区、录像和数据库继续保存在原 `data_root`。
+
+新版镜像制作与备份流程见 `docker/runtime11/README.md` 的「2026-11-24」章节。导出必须在 Windows 正常关机后执行。
+
+### HDD 原件与有上限的 SSD 镜像缓存
+
+生产配置通过 `image_cache_root` 开启只读镜像缓存；`image_cache_max_gb` 为缓存物理占用上限（GiB），`image_cache_reserve_gb` 为缓存填充时预留的 SSD 空闲空间。当前分别为 1400 / 200 GiB。未配置缓存时保持原来的直接挂载方式。
+
+- 环境的 `base_storage` 指向 HDD 原件。第一次创建实例先复制所需基础盘、软件差分盘和 `windows*` 启动元数据到 SSD，再启动 Windows；后续命中缓存直接启动。
+- 缓存保留镜像内的相对目录和 `/base_storage` 后备链路径；同一个原件在不同软件环境间使用硬链接复用。原件身份、大小或修改时间改变后生成新缓存，旧实例继续使用旧版本。
+- 容量不足时按最近使用时间淘汰无实例引用的缓存。运行中和已停止但可恢复的实例都锁定缓存，只有删除实例后解除锁定。全部被占用时明确报错，不删除依赖镜像。
+- 缓存准备在后台执行，不阻塞巡检；启动超时与运行时长从缓存准备完成、开始启动容器时计算。首次复制时间与缓存命中后的启动耗时应分别统计。
+- `vm_storage_root` 中每个实例的可写 C 盘不是缓存，不会被缓存淘汰；其空间不计入 1400 GiB 镜像预算，但受 SSD 空闲空间检查保护。删除实例仍保留该目录及工作区，后续清理必须确认不再需要。
+- 缓存使用临时文件、原件变更检查和原子发布，服务重启保留引用记录；不要手工删除 `objects`、`views`、`leases`，也不要修改正在被引用的缓存文件。
+
+本机整个 T7 镜像库归档位置：`/data/hdd/vm_manager/image-library/t7-storage/`。修复过启动流程的 Revit 原件单独保存在 `/data/hdd/vm_manager/image-library/revit-2027/`，不要用 T7 的旧 Revit 覆盖它。其余已注册原件原先已位于 `/data/hdd`，继续保留其原路径。外盘原件作为备份保留。
+
+以后制作软件差分镜像：正常关机后导出完整软件差分目录到 HDD，保留它所依赖的基础盘以及 `windows*` 元数据；注册环境的 `base_storage` 指向 HDD 目录。无需手动复制到 SSD，也不要将 `base_storage` 指向缓存目录。首次启动会自动准备缓存，常用环境可以提前调用 `ImageCache.prepare(env, temporary_id)` 预热，完成后 `release(temporary_id)`；尚未启动实例的预热缓存允许被淘汰。
+
+T7 库的登记包含原始、CPU 和 GPU 命名的各差分盘，软件版本先沿用镜像目录标记；CATIA 目录未标版本，显示“版本待确认”。“GPU 镜像”只是该镜像变体的名称，当前启动流程没有配置 GPU 直通，不代表已经提供硬件 GPU 加速。Revit 使用修复版原件，不重复注册旧版盘。
+
+迁移期间如果平台有任务运行，不为加载新增环境而重启 VM Manager。旧 Revit 路径 `/home/ajx/.local/share/harnessstudio/vm-images/revit-2027` 可保留为指向 HDD 原件的兼容符号链接，缓存键使用解析后的真实路径，因此不会额外复制一份缓存。新增环境登记写入 `environments.json` 后，需在安全重启 VM Manager 时加载；兼容链接不占用镜像数据空间，也不要在旧配置仍被进程引用时删除。

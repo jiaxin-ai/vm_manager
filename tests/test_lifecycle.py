@@ -565,3 +565,20 @@ def test_each_round_starts_at_most_one(h):
     ids = [h.create_ok(spec={"cpu_cores": 2, "ram_gb": 2}) for _ in range(3)]
     h.rounds(1)
     assert [h.status(i) for i in ids] == ["starting", "queued", "queued"]
+
+
+def test_explicit_vm_storage_survives_stop_start(h, tmp_path):
+    root = str(tmp_path / 'vm-disks')
+    os.makedirs(root)
+    h.vms.settings['vm_storage_root'] = root
+    vm_id = h.create_ok()
+    h.rounds(1)
+    c = h.backend.containers[h.vm(vm_id)['container_id']]
+    assert c['volumes'][os.path.join(root, vm_id)] == {'bind': '/storage', 'mode': 'rw'}
+    assert os.path.isdir(os.path.join(root, vm_id))
+    h.rounds(1)
+    assert h.client.post(f'/v1/vms/{vm_id}/stop').status_code == 200
+    assert h.client.post(f'/v1/vms/{vm_id}/start').status_code == 200
+    h.rounds(2)
+    assert h.status(vm_id) == 'running'
+    assert h.backend.containers[h.vm(vm_id)['container_id']] is c

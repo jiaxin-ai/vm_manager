@@ -4,8 +4,7 @@ echo '1. Construct basic env...'
 if [ -f /storage/data.qcow2 ]; then
   echo 'Existing disk found, skip initialization.'
 else
-  rm -rf /storage
-  mkdir -p /storage
+  mkdir -p /storage || exit 1
   cp -n /base_storage/windows* /storage/ || { echo 'ERROR: failed to copy windows* files'; exit 1; }
   rm -f /storage/windows*.vars
   qemu-img create -f qcow2 -F "$BASE_FORMAT" -b "/base_storage/$BASE_IMG" /storage/data.qcow2 \

@@ -39,10 +39,311 @@
       "cpu_cores": 8,
       "ram_gb": 16
     },
-    "docker_image": "vmanager:1.1",
+    "docker_image": "vmanager:1.1-bootfix-20261124",
     "base_storage": "/data/hdd/ProSoftAgentArena/src/win-arena-container/vm/storage-sw",
     "base_img": "data_v3_autocad_sw_ansys.img",
     "base_format": "raw",
+    "probe_path": "/probe",
+    "diff_img": "solidworks-2025-bootfix-20261124/data.qcow2"
+  },
+  {
+    "environment_id": "revit-2027",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Revit",
+        "version": "2027"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 8,
+      "ram_gb": 16
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/revit-2027",
+    "base_img": "data.img",
+    "base_format": "raw",
+    "diff_img": "revit-2027/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "autodesk-fusion",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Autodesk Fusion",
+        "version": "版本待确认"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 8,
+      "ram_gb": 16
+    },
+    "docker_image": "vmanager:1.1-runtimefix-20261120",
+    "base_storage": "/data/hdd/vm-build/fusion-storage",
+    "base_img": "data.img",
+    "base_format": "raw",
+    "diff_img": "Fusion/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-blender-5.2.3",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Blender",
+        "version": "5.2.3"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "blender-5.2.3/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-blender5.2.3-cpu",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Blender（CPU 镜像）",
+        "version": "5.2.3"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "blender-5.2.3-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-blender-5.2.3-gpu",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Blender（GPU 镜像）",
+        "version": "5.2.3"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "blender-5.2.3-gpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-catias",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "CATIA",
+        "version": "版本待确认"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "catias/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-kicad10.0.7",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "KiCad",
+        "version": "10.0.7"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "kicad-10.0.7/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-ltspice26.1.1",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "LTspice",
+        "version": "26.1.1"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "ltspice-26.1.1/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-mojoco-3.17.0",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "MuJoCo",
+        "version": "3.17.0"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "mojoco-3.17.0/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-mojoco-3.17.0-cpu",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "MuJoCo（CPU 镜像）",
+        "version": "3.17.0"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "mojoco-3.17.0-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-openmodelica-1.27.1",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "OpenModelica",
+        "version": "1.27.1"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "openmodelica-1.27.1/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-openmodelica1.27.1-cpu",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "OpenModelica（CPU 镜像）",
+        "version": "1.27.1"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "openmodelica-1.27.1-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-paraview-6.2.0",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "ParaView",
+        "version": "6.2.0"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "paraview-6.2.0/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-paraview6.2.0-cpu",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "ParaView（CPU 镜像）",
+        "version": "6.2.0"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "paraview-6.2.0-cpu/data.qcow2",
+    "probe_path": "/probe"
+  },
+  {
+    "environment_id": "win11-rhino-8.36",
+    "os": "windows11",
+    "software": [
+      {
+        "name": "Rhino",
+        "version": "8.36"
+      }
+    ],
+    "min_spec": {
+      "cpu_cores": 4,
+      "ram_gb": 8
+    },
+    "docker_image": "vmanager:1.1-bootfix-20261124",
+    "base_storage": "/data/hdd/vm_manager/image-library/t7-storage",
+    "base_img": "data_base.img",
+    "base_format": "raw",
+    "diff_img": "rhino-8.36/data.qcow2",
     "probe_path": "/probe"
   }
 ]

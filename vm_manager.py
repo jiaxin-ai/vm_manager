@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from backend import AGENT_PORT, RDP_PORT, SCRIPT_IN_CONTAINER, VNC_PORT, DockerUnavailable
 from common import GIB, ApiError, from_iso, to_iso, utc_now
+from image_cache import ImageCache
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,9 @@ class VmManager:
         self.workspaces = workspaces
         self.recordings = recordings
         self.settings = settings
+        self.image_cache = (ImageCache(settings["image_cache_root"], settings["image_cache_max_gb"],
+                                       settings["image_cache_reserve_gb"])
+                            if settings.get("image_cache_root") else None)
         self.environments = {env["environment_id"]: env for env in environments}
         self.instance_locks = instance_locks
         self.clock = clock
@@ -110,7 +114,8 @@ class VmManager:
         if cpu > resources["cpu"]["available"] or mem > resources["memory_gb"]["available"]:
             return False
         min_free = self.settings["min_free_disk_gb"]
-        for path in (self.settings["data_root"], self.backend.docker_root_dir()):
+        for path in (self.settings["data_root"], self.backend.docker_root_dir(),
+                     self.settings.get("vm_storage_root", self.settings["data_root"])):
             if self.backend.disk_usage(path)[1] // GIB < min_free:
                 return False
         return True
@@ -455,6 +460,8 @@ class VmManager:
             self.backend.stop_container(vm["container_id"], self.settings["stop_timeout_seconds"])
             self.db.update_vm(vm_id, {"reserved": 0})
             self.backend.remove_container(vm["container_id"])
+        if self.image_cache:
+            self.image_cache.release(vm_id)
         self.db.delete_vm(vm_id)
         log.info("vm %s deleted", vm_id)
 
@@ -479,6 +486,8 @@ class VmManager:
         env = json.loads(vm["environment_json"])
         expose = json.loads(vm["expose"])
         project_id, vm_id = vm["project_id"], vm["vm_id"]
+        if self.image_cache:
+            env = self.image_cache.prepare(env, vm_id)
         volumes = {
             env["base_storage"]: {"bind": BASE_STORAGE_IN_CONTAINER, "mode": "ro"},
             self.workspaces.task_dir(project_id, vm["task_id"]): {"bind": "/shared", "mode": "rw"},
@@ -486,6 +495,10 @@ class VmManager:
             self.workspaces.recordings_dir(project_id, vm_id): {"bind": "/recordings", "mode": "rw"},
             SCRIPT_PATH: {"bind": SCRIPT_IN_CONTAINER, "mode": "ro"},
         }
+        if self.settings.get("vm_storage_root"):
+            storage = os.path.join(self.settings["vm_storage_root"], vm_id)
+            os.makedirs(storage, exist_ok=True)
+            volumes[storage] = {"bind": "/storage", "mode": "rw"}
         for upstream in json.loads(vm["upstreams"]):
             volumes[self.workspaces.task_dir(project_id, upstream["task_id"])] = {
                 "bind": f"/upstream/{upstream['task_id']}", "mode": "ro",
@@ -529,6 +542,10 @@ class VmManager:
                 container_id = self.backend.create_container(**self._container_args(vm))
                 self.db.update_vm(vm_id, {"container_id": container_id})
                 log.info("vm %s container %s created", vm_id, container_id[:12])
+            if self.image_cache:
+                now = self.clock()
+                self.db.update_vm(vm_id, {"started_at": to_iso(now),
+                    "expires_at": to_iso(now + timedelta(minutes=vm["timeout_minutes"]))})
             ports = self.backend.start_container(container_id)
             self.db.update_vm(vm_id, {"status": "starting", "ports": json.dumps(ports), "ever_started": 1},
                               statuses=["creating"])
@@ -554,6 +571,8 @@ class VmManager:
                     self.db.update_vm(vm_id, {**fields, "last_retry_at": to_iso(self.clock())},
                                       statuses=["creating"])
                     return
+            if self.image_cache:
+                self.image_cache.release(vm_id)
             self.db.update_vm(vm_id, {**fields, "reserved": 0}, statuses=["creating"])
             return
         # 重新启动失败：保留容器和 C 盘，确认容器已停止后释放资源
@@ -862,10 +881,15 @@ class VmManager:
                 lock.release()
                 continue
             log.info("vm %s claimed from queue, creating", vm_id)
-            try:
-                self._provision(vm_id)
-            finally:
-                lock.release()
+            # Cache misses must not block health inspection.
+            if self.image_cache:
+                if not self._handoff(vm_id, self._provision):
+                    lock.release()
+            else:
+                try:
+                    self._provision(vm_id)
+                finally:
+                    lock.release()
             return
 
     # ==================== 服务重启恢复（第 13 节） ====================
@@ -908,8 +932,12 @@ class VmManager:
                         try:
                             self.backend.remove_container(info["id"])
                             fields.update(container_id=None, ports=None)
+                            if self.image_cache:
+                                self.image_cache.release(vm_id)
                         except Exception:
                             log.exception("recover: removing leftover container of %s failed", vm_id)
+                    if info is None and self.image_cache:
+                        self.image_cache.release(vm_id)
                     self.db.update_vm(vm_id, fields, statuses=["creating"])
                     log.warning("recover: vm %s creating -> failed (PROVISION_FAILED)", vm_id)
                 else:

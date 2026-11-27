@@ -59,6 +59,14 @@ def load_config(settings_path, environments_path):
             raise StartupError(f"环境 {env.get('environment_id')} 缺少字段：{missing}")
         env["base_storage"] = resolve(env["base_storage"])
     settings["data_root"] = resolve(settings["data_root"])
+    if settings.get("vm_storage_root"):
+        settings["vm_storage_root"] = resolve(settings["vm_storage_root"])
+        os.makedirs(settings["vm_storage_root"], exist_ok=True)
+    if settings.get("image_cache_root"):
+        settings["image_cache_root"] = resolve(settings["image_cache_root"])
+        if (settings.get("image_cache_max_gb", 0) <= 0
+                or settings.get("image_cache_reserve_gb", -1) < 0):
+            raise StartupError("镜像缓存需要正数 image_cache_max_gb 和非负 image_cache_reserve_gb")
     return settings, environments
 
 
@@ -108,6 +116,24 @@ def check_diff_disk(qemu_img, env):
     if info.get("backing-filename-format") != env["base_format"]:
         raise StartupError(f"差分盘 {path} 的后备盘格式为 {info.get('backing-filename-format')}，"
                            f"与 base_format={env['base_format']} 不一致")
+
+
+def detect_access_host():
+    """Resolve the physical LAN interface without following VPN policy routes."""
+    try:
+        routes = json.loads(subprocess.check_output(["ip", "-j", "-4", "route", "show", "default"], timeout=5))
+        for route in sorted(routes, key=lambda row: row.get("metric", 0)):
+            dev = route.get("dev", "")
+            if not dev or not os.path.exists(f"/sys/class/net/{dev}/device"):
+                continue
+            addresses = json.loads(subprocess.check_output(["ip", "-j", "-4", "addr", "show", "dev", dev, "scope", "global"], timeout=5))
+            for interface in addresses:
+                for address in interface.get("addr_info", []):
+                    if address.get("family") == "inet":
+                        return address["local"]
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise StartupError(f"自动检测局域网地址失败：{exc}") from exc
+    raise StartupError("未找到物理网卡的局域网 IPv4 地址，请检查网络连接")
 
 
 def startup_checks(settings, environments, backend):
@@ -177,6 +203,8 @@ def main():
 
     try:
         settings, environments = load_config(args.settings, args.environments)
+        if settings["access_host"] == "auto":
+            settings["access_host"] = detect_access_host()
         backend = Backend(docker_timeout=max(180, settings["stop_timeout_seconds"] + 60))
         startup_checks(settings, environments, backend)
     except StartupError as exc:

@@ -49,7 +49,7 @@ Get-Content 'C:\OEM\on-logon.ps1'
 powershell -NoProfile -ExecutionPolicy Bypass -File '\\host.lan\Runtime\Install-WaaHook.ps1' -Startup 'C:\OEM\on-logon.ps1'
 ```
 
-脚本先验证上述已知启动格式，再备份原脚本，复制更新器到 C:\OEM，并在原脚本最前面加入同步调用。原来的 Caddy 和 main.py 启动顺序/参数保持；原 `python` 解析到的 sys.executable 同时用于 pip 与 main.py。不会注册/修改任务，不启动第二个 Agent，不使用另一套 Agent Python。格式不匹配时拒绝改动，按实际脚本手动加入同样的前置调用，并让原 Agent 命令使用 `$vmanagerPython`；不要另建任务。
+脚本先验证上述已知启动格式，再备份原脚本，复制更新器到 C:\OEM，并在原脚本最前面加入同步调用。原来的 Caddy 和 main.py 启动顺序/参数保持；原 `python` 解析到的 sys.executable 同时用于 pip 与 main.py。新版会在备份后为原任务加上 -NoProfile（见文末 2026-11-24 更新），不启动第二个 Agent，不使用另一套 Agent Python。格式不匹配时拒绝改动，按实际脚本手动加入同样的前置调用，并让原 Agent 命令使用 `$vmanagerPython`；不要另建任务。
 
 4. 重启 Windows，让原 WAA 登录启动流程首次执行更新（原任务若在登录时触发，仍在登录时执行，不改为独立系统服务）。不要在 Agent 正在监听 5000 时手动执行更新器；会拒绝并记日志。原任务应在原交互用户桌面以管理员权限运行，以便现有 Recorder 安装器安装 transcript hook；若尚未勾选“使用最高权限运行”，由用户在**原任务**中勾选，不创建新任务。
 
@@ -107,3 +107,37 @@ Get-CimInstance Win32_Process | Where-Object CommandLine -Match 'server\\main.py
 ```
 
 重启第二次，日志应显示 hashes unchanged；按需要测试源码更新、requirements 更新、Recorder 更新及不可用共享导致拒绝启动。D/E/F/G 应仍指向原共享，Upstream 仍只读；Runtime 不分配盘符。宿主验证无法替代这些 Windows 端验证。
+
+## 2026-11-20：依赖完整性修复
+
+旧服务代码直接导入 psutil、pywin32、pywinauto、comtypes、pyperclip，但上游 requirements 未完整声明。构建现在在发布快照中合并 `requirements-windows.txt`（不改上游源码），并加入 `check-dependencies.py`。每次登录更新都实际检查 Agent 和 Recorder 的 Python 导入；版本未变但依赖损坏时仍重装。安装后再次验证，通过才写入成功状态。
+
+源码目录已移动时，可从已发布镜像保留原服务和 Recorder，再构建新版本：
+
+```bash
+python3 docker/runtime11/build.py --from-runtime-image vmanager:1.1 --tag vmanager:1.1-runtimefix-20261120
+```
+
+已有磁盘的 Hook 不会自行更换本地更新器。切换新 Docker 镜像后，在管理员 PowerShell 再执行原 `Install-WaaHook.ps1` 命令即可；现在会备份并刷新本地更新器，保留原 Hook 和登录任务。不要修改全局 PowerShell 执行策略。
+
+导出前必须验证：`http://127.0.0.1:5000/probe` 返回成功、五个 UNC 共享可访问、实际录制开始和结束成功并生成产物。仅看软件首页和任务最高权限不代表服务就绪。依赖缺失时不能把镜像当作通过验收。
+
+本机修复发布完成后，`vmanager:1.1` 指向修复版，旧版本另存为 `vmanager:1.1-before-runtimefix-20261120`。现有容器不会因标签变化而自动更新；应正常关闭后重建容器。Revit 环境固定使用 `vmanager:1.1-runtimefix-20261120`，便于追溯。
+
+## 2026-11-24：固定启动解释器与镜像发布
+
+制作软件镜像时使用 `vmanager:1.1-bootfix-20261124`。在原登录账户的管理员 PowerShell 中执行（Python 路径应是该镜像实际使用的解释器）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File \\host.lan\Runtime\Install-WaaHook.ps1 -Python C:\Users\Docker\AppData\Local\Programs\Python\Python310\python.exe
+```
+
+新版安装器在改动前备份原脚本、更新器及计划任务 XML；将既有任务加上 `-NoProfile`，并把已核实的 Python 完整路径写入启动脚本。不会新建任务，不依赖交互式 profile 或 PATH 中另一套 Python。省略 `-Python` 时仅使用已有 Runtime 状态中的路径；无法确定就报错，不猜解释器。
+
+导出前必须完成一次新 Runtime 更新，确认 `/probe` 成功，再正常关机。不要把“等待首次开机安装依赖”的磁盘作为已完成镜像发布。新版依赖检查先校验共享中的检查器，再复制到本地执行；依然检查实际导入，缺包仍报错或修复，未降低探活标准。`update.log` 记录 manifest、Agent 和 Recorder 检查阶段，便于区分 Windows 启动、共享访问及依赖安装耗时。
+
+正式环境通过 `settings.json` 的可选 `vm_storage_root` 指定独立运行盘目录，推荐本机 NVMe；每台实例使用 `<vm_storage_root>/<vm_id>/` 绑定到 `/storage`。新建实例生效，现有容器不自动迁移。该目录中的磁盘在删除实例后仍保留，确认不需要数据后再清理。制作容器也要显式 `-v <制作盘目录>:/storage`，避免 C 盘写入 Docker 的容器层。基础盘、软件差分盘和运行盘都应优先使用 SSD，机械盘保留归档备份。
+
+更换镜像时先保留旧磁盘、启动元数据、环境配置和 Docker 标签；对发布副本离线合并/导出，禁止向运行中的后备盘提交差分。发布后新建独立实例验收：从 POST 创建请求开始计时，到 Agent `/probe`、VNC 与 RDP 全部通过、平台显示 `running` 为止。首次验收期间不并行复制镜像，不用人工启动服务代替开机任务。
+
+正常关机等待使用 300 秒（制作容器 `--stop-timeout 300`，VM Manager `stop_timeout_seconds: 300`）。仅容器退出不够：必须确认日志出现 `Shutdown completed!`；如果超时强停，先恢复启动并正常关机，再发布磁盘。
